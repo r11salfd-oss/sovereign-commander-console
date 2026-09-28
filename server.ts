@@ -12,6 +12,28 @@ import util from 'util';
 import { spawn, exec } from 'child_process';
 import { sovereignKernelInstance } from './src/os/kernelEngine';
 
+// Auto-load .env environment file if present
+if (fs.existsSync('.env')) {
+  try {
+    const envContent = fs.readFileSync('.env', 'utf8');
+    for (const line of envContent.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const match = trimmed.match(/^([\w.-]+)\s*=\s*(.*)?$/);
+      if (match) {
+        const key = match[1];
+        let val = match[2] || '';
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (!process.env[key]) {
+          process.env[key] = val.trim();
+        }
+      }
+    }
+  } catch (e) {}
+}
+
 const execAsync = util.promisify(exec);
 
 let mcpProcess: any = null;
