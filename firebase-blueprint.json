@@ -1,0 +1,52 @@
+{
+  "entities": {
+    "Approval": {
+      "title": "Approval",
+      "description": "Represents an approval request for a HITL action.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string" },
+        "risk": { "type": "string" },
+        "agent": { "type": "string" },
+        "type": { "type": "string" },
+        "summary": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "payload": { "type": "object" },
+        "signature": { "type": "string" },
+        "result": { "type": "object" }
+      },
+      "required": ["id", "status", "risk", "agent", "type", "summary", "reason", "createdAt", "expiresAt"]
+    },
+    "ChatSession": {
+      "title": "ChatSession",
+      "description": "Represents a persistent sovereign AI chat session with conversation history and context memory.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "chatMode": { "type": "string" },
+        "selectedAgent": { "type": "string" },
+        "selectedCouncil": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "messages": { "type": "array" }
+      },
+      "required": ["id", "title", "creatorId", "createdAt", "updatedAt", "chatMode"]
+    }
+  },
+  "firestore": {
+    "approvals": {
+      "schema": { "$ref": "#/entities/Approval" },
+      "description": "Collection of HITL approval proposals."
+    },
+    "chat_sessions": {
+      "schema": { "$ref": "#/entities/ChatSession" },
+      "description": "Collection of user chat sessions and persistent conversation memory."
+    }
+  }
+}

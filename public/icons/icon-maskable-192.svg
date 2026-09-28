@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="35%" r="75%">
+      <stop offset="0%" stop-color="#0c162d"/>
+      <stop offset="60%" stop-color="#070a14"/>
+      <stop offset="100%" stop-color="#04060b"/>
+    </radialGradient>
+
+    <!-- Metallic Shield Gradient -->
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="30%" stop-color="#0891b2"/>
+      <stop offset="70%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#030712"/>
+    </linearGradient>
+
+    <!-- Holographic Neon Border Gradient -->
+    <linearGradient id="neonBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="50%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+
+    <!-- Core Reactor Glow -->
+    <radialGradient id="reactorCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="35%" stop-color="#38bdf8"/>
+      <stop offset="75%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#082f49"/>
+    </radialGradient>
+
+    <!-- Glow Filter -->
+    <filter id="cyberGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3.84" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="intenseGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6.720000000000001" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Base Plate (Square for maskable, rounded squircle for standard) -->
+  <rect width="192" height="192" rx="0" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="1.536"/>
+
+  <!-- Subtle Cybernetic Tech Grid -->
+  <g opacity="0.12" stroke="#38bdf8" stroke-width="0.384">
+    <line x1="0" y1="48" x2="192" y2="48"/>
+    <line x1="0" y1="96" x2="192" y2="96"/>
+    <line x1="0" y1="144" x2="192" y2="144"/>
+    <line x1="48" y1="0" x2="48" y2="192"/>
+    <line x1="96" y1="0" x2="96" y2="192"/>
+    <line x1="144" y1="0" x2="144" y2="192"/>
+  </g>
+
+  <!-- Orbital Sensor Ring -->
+  <circle cx="96" cy="96" r="59.136" fill="none" stroke="#1e3a5f" stroke-width="1.92" stroke-dasharray="9.600000000000001 3.84"/>
+  <circle cx="96" cy="96" r="51.072" fill="none" stroke="#0284c7" stroke-width="1.1520000000000001" opacity="0.4"/>
+
+  <!-- Sovereign Shield Crest -->
+  <g filter="url(#cyberGlow)">
+    <!-- Outer Shield Frame -->
+    <path d="M96 44.928 
+             L139.008 69.12 
+             L139.008 106.752 
+             C139.008 139.008 96 155.136 96 155.136 
+             C96 155.136 52.992 139.008 52.992 106.752 
+             L52.992 69.12 Z" 
+          fill="url(#shieldGrad)" 
+          stroke="url(#neonBorder)" 
+          stroke-width="3.072" 
+          stroke-linejoin="round"/>
+
+    <!-- Inner Circuit Inset -->
+    <path d="M96 55.68 
+             L128.256 75.84 
+             L128.256 104.064 
+             C128.256 128.256 96 143.04 96 143.04 
+             C96 143.04 63.744 128.256 63.744 104.064 
+             L63.744 75.84 Z" 
+          fill="#061224" 
+          stroke="#06b6d4" 
+          stroke-width="1.344" 
+          opacity="0.85"/>
+  </g>
+
+  <!-- Quantum Chevron Sentinel Wings -->
+  <g stroke="#38bdf8" stroke-width="1.92" stroke-linecap="round" fill="none" opacity="0.9">
+    <path d="M71.80799999999999 90.624 L96 77.184 L120.19200000000001 90.624"/>
+    <path d="M77.184 101.376 L96 89.28 L114.816 101.376"/>
+  </g>
+
+  <!-- Central Fusion Energy Reactor (Node) -->
+  <g filter="url(#intenseGlow)">
+    <circle cx="96" cy="112.128" r="12.096" fill="url(#reactorCore)"/>
+    <circle cx="96" cy="112.128" r="5.376" fill="#ffffff"/>
+  </g>
+
+  <!-- Crosshairs / Targeting Reticle Lines -->
+  <g stroke="#ffffff" stroke-width="1.1520000000000001" stroke-linecap="round" opacity="0.8">
+    <line x1="96" y1="102.72" x2="96" y2="106.752"/>
+    <line x1="96" y1="117.504" x2="96" y2="121.536"/>
+    <line x1="86.592" y1="112.128" x2="90.624" y2="112.128"/>
+    <line x1="101.376" y1="112.128" x2="105.408" y2="112.128"/>
+  </g>
+</svg>

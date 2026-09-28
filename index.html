@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Sovereign Commander Console</title>
+    <meta name="description" content="Secure Human-in-the-Loop operations console, audit chain verification panel, and model configuration dashboard." />
+    
+    <!-- PWA Web App Manifest & App Icons -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+
+    <!-- Theme & Colors -->
+    <meta name="theme-color" content="#070a14" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- iOS / Safari PWA support -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Sovereign" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- OpenGraph SEO -->
+    <meta property="og:title" content="Sovereign Commander Console" />
+    <meta property="og:description" content="Secure Human-in-the-Loop operations console, audit chain verification panel, and model configuration dashboard." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/icons/icon-512.png" />
+
+    <!-- Preconnect Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!-- Safe WebSocket & HMR Error Suppressor for AI Studio Preview Environment -->
+    <script>
+      (function() {
+        function isViteWsError(err) {
+          if (!err) return false;
+          var msg = typeof err === 'string' ? err : (err.message || String(err));
+          return msg.indexOf('WebSocket') !== -1 || 
+                 msg.indexOf('failed to connect to websocket') !== -1 ||
+                 msg.indexOf('WebSocket closed without opened') !== -1;
+        }
+
+        window.addEventListener('unhandledrejection', function(event) {
+          if (isViteWsError(event.reason)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }, true);
+
+        window.addEventListener('error', function(event) {
+          if (isViteWsError(event.message) || isViteWsError(event.error)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }, true);
+
+        // Auto-dismiss benign Vite WebSocket error overlay in preview iframe
+        if (typeof MutationObserver !== 'undefined') {
+          var observer = new MutationObserver(function() {
+            var overlays = document.querySelectorAll('vite-error-overlay');
+            for (var i = 0; i < overlays.length; i++) {
+              var shadow = overlays[i].shadowRoot;
+              if (shadow && (shadow.innerHTML.indexOf('WebSocket') !== -1 || shadow.innerHTML.indexOf('websocket') !== -1)) {
+                overlays[i].remove();
+              }
+            }
+          });
+          observer.observe(document.documentElement, { childList: true, subtree: true });
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-[#07090e] text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

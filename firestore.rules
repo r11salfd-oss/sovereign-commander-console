@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    function isValidApproval(data) {
+      return data.keys().hasAll(['id', 'status', 'risk', 'agent', 'type', 'summary', 'reason', 'createdAt', 'expiresAt', 'creatorId']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.status in ['pending', 'approved', 'executed', 'failed', 'rejected', 'expired'] &&
+             data.risk in ['low', 'medium', 'high', 'critical'] &&
+             data.agent is string && data.agent.size() <= 128 &&
+             data.type is string && data.type.size() <= 128 &&
+             data.summary is string && data.summary.size() <= 1024 &&
+             data.reason is string && data.reason.size() <= 2048 &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             data.expiresAt is string && data.expiresAt.size() <= 64 &&
+             data.creatorId is string && data.creatorId.size() <= 128 && data.creatorId == request.auth.uid;
+    }
+
+    function isValidChatSession(data) {
+      return data.keys().hasAll(['id', 'title', 'creatorId', 'createdAt', 'updatedAt', 'chatMode']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() <= 256 &&
+             data.creatorId is string && data.creatorId.size() <= 128 && data.creatorId == request.auth.uid &&
+             data.createdAt is string && data.createdAt.size() <= 64 &&
+             data.updatedAt is string && data.updatedAt.size() <= 64 &&
+             data.chatMode in ['solo', 'council'];
+    }
+
+    match /approvals/{approvalId} {
+      allow get: if isSignedIn() && existing().creatorId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.creatorId == request.auth.uid;
+      allow create: if isSignedIn() && 
+                    isValidId(approvalId) &&
+                    isValidApproval(incoming());
+      allow update: if isSignedIn() &&
+                    existing().creatorId == request.auth.uid &&
+                    isValidApproval(incoming()) &&
+                    // Only allow status to be updated, or result. Status can only be changed if it was pending or approved
+                    (
+                      incoming().diff(existing()).affectedKeys().hasOnly(['status', 'signature', 'result']) &&
+                      existing().status in ['pending', 'approved'] &&
+                      incoming().creatorId == existing().creatorId &&
+                      incoming().id == existing().id &&
+                      incoming().createdAt == existing().createdAt
+                    );
+      allow delete: if isSignedIn() && existing().creatorId == request.auth.uid;
+    }
+
+    match /chat_sessions/{sessionId} {
+      allow get: if isSignedIn() && existing().creatorId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.creatorId == request.auth.uid;
+      allow create: if isSignedIn() && 
+                    isValidId(sessionId) &&
+                    isValidChatSession(incoming());
+      allow update: if isSignedIn() &&
+                    existing().creatorId == request.auth.uid &&
+                    incoming().creatorId == request.auth.uid &&
+                    incoming().id == existing().id &&
+                    incoming().createdAt == existing().createdAt &&
+                    isValidChatSession(incoming());
+      allow delete: if isSignedIn() && existing().creatorId == request.auth.uid;
+    }
+  }
+}

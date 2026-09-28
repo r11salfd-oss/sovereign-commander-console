@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  /* Custom Sovereign Theme Colors & Shadows */
+  --color-citadel-dark: #07090e;
+  --color-citadel-panel: rgba(11, 16, 27, 0.7);
+  --color-citadel-border: rgba(45, 62, 92, 0.4);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #07090e;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f293d;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b4f74;
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: var(--color-citadel-panel);
+  border: 1px solid var(--color-citadel-border);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.15);
+}
+
+.glow-amber {
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.15);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
+}
+
+/* Arabic typographic styles (RTL elements) */
+[dir="rtl"] {
+  font-family: var(--font-sans);
+}

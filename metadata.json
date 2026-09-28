@@ -1,0 +1,6 @@
+{
+  "name": "Sovereign Commander Console",
+  "description": "Secure Human-in-the-Loop operations console, audit chain verification panel, and model configuration dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

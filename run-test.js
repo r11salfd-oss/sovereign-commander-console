@@ -1,0 +1,1 @@
+async function run() { try { const r = await fetch('http://localhost:3000/api/chat/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent: 'test', message: 'hello', mode: 'solo' }) }); console.log(r.status); console.log(await r.text()); } catch (e) { console.error(e) } } run();
