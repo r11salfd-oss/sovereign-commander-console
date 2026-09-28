@@ -145,6 +145,23 @@ async function runMasterTestSuites() {
     return r.status === 200 && r.data.ok === true && typeof r.data.synchronizedItems === 'number';
   });
 
+  // --- PART 3: Unified Multi-CLI Bridge (OpenCode + AGY + Antigravity) (2 tests) ---
+  console.log('\n--- [PART 3] Unified Multi-CLI Bridge Suite (OpenCode + AGY + Antigravity) ---');
+
+  await test('14. Multi-CLI Bridge Status (/api/cli/multibridge/status)', async () => {
+    const r = await makeRequest('/api/cli/multibridge/status');
+    return r.status === 200 && r.data.ok === true && Array.isArray(r.data.engines) && r.data.engines.length === 3;
+  });
+
+  await test('15. Multi-CLI Dispatch (/api/cli/multibridge/dispatch)', async () => {
+    const r = await makeRequest('/api/cli/multibridge/dispatch', 'POST', {
+      engine: 'antigravity',
+      command: 'agent:mesh:sync',
+      args: ['--mesh', 'sovereign-unified']
+    });
+    return r.status === 200 && r.data.ok === true && r.data.exitCode === 0 && typeof r.data.output === 'string';
+  });
+
   console.log('\n================================================================');
   console.log(`📊 MASTER TEST RESULTS: ${passed} PASSED, ${failed} FAILED (TOTAL: ${passed + failed})`);
   console.log('================================================================');
