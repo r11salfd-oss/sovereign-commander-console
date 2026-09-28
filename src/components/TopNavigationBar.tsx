@@ -81,8 +81,22 @@ export default function TopNavigationBar() {
   const hasDraggedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    const checkLocalUser = () => {
+      try {
+        const saved = localStorage.getItem('sovereign_local_commander') || sessionStorage.getItem('sovereign_local_commander');
+        if (saved) return JSON.parse(saved);
+      } catch (e) {}
+      return null;
+    };
+    const localU = checkLocalUser();
+    if (localU) setCurrentUser(localU);
+
     return auth.onAuthStateChanged((u) => {
-      setCurrentUser(u);
+      if (u) {
+        setCurrentUser(u);
+      } else {
+        setCurrentUser(checkLocalUser());
+      }
     });
   }, []);
 

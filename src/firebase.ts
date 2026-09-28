@@ -115,6 +115,10 @@ export async function getGoogleAuthHeaders(): Promise<Record<string, string>> {
 export async function logoutUser(): Promise<void> {
   sessionStorage.removeItem('google_oauth_access_token');
   sessionStorage.removeItem('google_id_token');
+  sessionStorage.removeItem('sovereign_local_commander');
+  localStorage.removeItem('sovereign_local_commander');
+  sessionStorage.removeItem('google_user_email');
+  localStorage.removeItem('google_user_email');
   return await signOut(auth);
 }
 
