@@ -74,8 +74,16 @@ export async function loginWithGoogle(): Promise<User> {
       sessionStorage.setItem('google_user_email', cred.user.email);
     }
     return cred.user;
-  } catch (error) {
-    console.error('Firebase authentication error:', error);
+  } catch (error: any) {
+    if (error?.code === 'auth/popup-closed-by-user') {
+      console.warn('Firebase authentication: Popup closed by user before sign-in completed.');
+    } else if (error?.code === 'auth/cancelled-popup-request') {
+      console.warn('Firebase authentication: Concurrent popup request cancelled.');
+    } else if (error?.code === 'auth/unauthorized-domain') {
+      console.warn('Firebase authentication: Domain unauthorized for OAuth popup. Requires localhost in Firebase Console.');
+    } else {
+      console.error('Firebase authentication error:', error);
+    }
     throw error;
   }
 }
@@ -122,9 +130,14 @@ export async function logoutUser(): Promise<void> {
   return await signOut(auth);
 }
 
+// Canonical listeners adhering to Firebase Authentication standard specifications
+export const logOutUser = logoutUser;
+
 export function subscribeToAuth(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback);
 }
+
+export const monitorAuthState = subscribeToAuth;
 
 /**
  * Recursively sanitizes data before sending to Firestore.

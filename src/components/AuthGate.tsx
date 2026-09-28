@@ -82,8 +82,18 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       console.error('Authentication attempt failed:', err);
       const msg = err?.message || 'Authentication could not be completed.';
       
+      // Handle common popup error codes gracefully
+      if (err?.code === 'auth/popup-closed-by-user' || msg.includes('popup-closed-by-user')) {
+        setAuthError('Sign-in popup was closed before completion. Please try again or enter in Local Commander mode.');
+        return;
+      }
+      if (err?.code === 'auth/cancelled-popup-request' || msg.includes('cancelled-popup-request')) {
+        setAuthError('Sign-in request was cancelled. Only one sign-in window can be open at a time.');
+        return;
+      }
+
       // Auto-fallback if Firebase rejects localhost OAuth domain
-      if (msg.includes('unauthorized-domain')) {
+      if (err?.code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
         console.warn('Firebase OAuth unauthorized domain detected on localhost. Auto-engaging Sovereign Local Commander session.');
         handleLocalBypass();
         return;
