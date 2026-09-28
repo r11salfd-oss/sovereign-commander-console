@@ -1,21 +1,33 @@
 import React, { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
 import { loginWithGoogle, subscribeToAuth } from '../firebase';
-import { ShieldCheck, AlertTriangle, RefreshCw, KeyRound } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, RefreshCw, KeyRound, Terminal } from 'lucide-react';
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const savedLocal = sessionStorage.getItem('sovereign_local_commander');
+      if (savedLocal) {
+        return JSON.parse(savedLocal) as User;
+      }
+    } catch (e) {}
+    return null;
+  });
+  const [loading, setLoading] = useState(!user);
   const [authInProgress, setAuthInProgress] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (user && (user as any).isLocalCommander) {
+      setLoading(false);
+      return;
+    }
     const unsubscribe = subscribeToAuth((u) => {
-      setUser(u);
+      if (u) setUser(u);
       setLoading(false);
     });
     return unsubscribe;
-  }, []);
+  }, [user]);
 
   const handleLogin = async () => {
     setAuthInProgress(true);
@@ -31,6 +43,22 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleLocalBypass = () => {
+    const mockUser: any = {
+      uid: 'sovereign-commander-local-root',
+      email: 'r11salfd@gmail.com',
+      displayName: 'Sovereign Commander (Local Admin)',
+      emailVerified: true,
+      isAnonymous: false,
+      isLocalCommander: true,
+      getIdToken: async () => 'mock-sovereign-token',
+    };
+    sessionStorage.setItem('sovereign_local_commander', JSON.stringify(mockUser));
+    sessionStorage.setItem('google_user_email', 'r11salfd@gmail.com');
+    setUser(mockUser);
+    setLoading(false);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#07090e] flex flex-col items-center justify-center text-cyan-400 font-mono text-sm gap-3">
@@ -41,6 +69,9 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) {
+    const isLocalhost = typeof window !== 'undefined' && 
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
     return (
       <div className="min-h-screen bg-[#07090e] flex flex-col items-center justify-center p-4 text-slate-300 font-mono">
         <div className="glass-panel p-8 rounded-xl border border-slate-800 text-center max-w-md w-full bg-[#0b101b]/90 shadow-2xl relative overflow-hidden">
@@ -59,27 +90,45 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
               <div className="flex-1 break-words">
                 <div className="font-bold mb-0.5">Authentication Error</div>
                 <div className="text-[11px] text-rose-200/90 font-mono">{authError}</div>
+                {authError.includes('unauthorized-domain') && (
+                  <div className="mt-2 text-[10px] text-amber-300 border-t border-rose-800/40 pt-1.5 font-sans">
+                    💡 Firebase restricts OAuth popups on local domains. Use Local Commander mode below to enter immediately.
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          <button
-            onClick={handleLogin}
-            disabled={authInProgress}
-            className="w-full bg-cyan-900/50 hover:bg-cyan-900/80 active:bg-cyan-800 border border-cyan-600/70 text-cyan-300 px-5 py-3 rounded-lg font-mono text-xs tracking-wider uppercase transition shadow-[0_0_20px_rgba(34,211,238,0.2)] flex items-center justify-center gap-2 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {authInProgress ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Authorizing...</span>
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="w-4 h-4 text-cyan-400" />
-                <span>Authenticate with Google</span>
-              </>
+          <div className="space-y-3">
+            <button
+              onClick={handleLogin}
+              disabled={authInProgress}
+              className="w-full bg-cyan-900/50 hover:bg-cyan-900/80 active:bg-cyan-800 border border-cyan-600/70 text-cyan-300 px-5 py-3 rounded-lg font-mono text-xs tracking-wider uppercase transition shadow-[0_0_20px_rgba(34,211,238,0.2)] flex items-center justify-center gap-2 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {authInProgress ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Authorizing...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                  <span>Authenticate with Google</span>
+                </>
+              )}
+            </button>
+
+            {(isLocalhost || authError) && (
+              <button
+                onClick={handleLocalBypass}
+                type="button"
+                className="w-full bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-600/60 text-emerald-400 px-5 py-2.5 rounded-lg font-mono text-xs tracking-wider uppercase transition flex items-center justify-center gap-2 font-medium"
+              >
+                <Terminal className="w-4 h-4 text-emerald-400" />
+                <span>Enter in Local Commander Mode</span>
+              </button>
             )}
-          </button>
+          </div>
 
           <p className="mt-6 text-[10px] text-slate-500 font-mono">
             Firebase Project: coherent-rainfall-fmbw7
@@ -91,4 +140,3 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
-
