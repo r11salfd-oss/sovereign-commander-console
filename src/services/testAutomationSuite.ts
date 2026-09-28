@@ -1026,6 +1026,29 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
   }
 ];
 
+// Execute a single test by test ID
+export async function executeSingleAutomatedTest(testId: string): Promise<TestResultItem> {
+  const test = AUTOMATED_TEST_SUITE.find(t => t.id === testId);
+  if (!test) {
+    throw new Error(`الاختبار ذو المعرف [${testId}] غير موجود في المنظومة`);
+  }
+  const exec = await test.run();
+  return {
+    id: test.id,
+    name: test.name,
+    department: test.department,
+    depthTier: test.depthTier,
+    description: test.description,
+    passed: exec.passed,
+    message: exec.message,
+    durationMs: exec.durationMs,
+    assertions: exec.assertions || [],
+    details: exec.details,
+    stackTrace: exec.stackTrace,
+    timestamp: new Date().toISOString()
+  };
+}
+
 // Execute Full Automated Test Suite with deep assertion reporting
 export async function executeAutomatedTestSuite(
   onProgress?: (current: TestCase, index: number, total: number, result: TestResultItem) => void,

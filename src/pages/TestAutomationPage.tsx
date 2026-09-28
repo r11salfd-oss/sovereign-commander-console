@@ -34,6 +34,7 @@ import {
 import { 
   AUTOMATED_TEST_SUITE, 
   executeAutomatedTestSuite, 
+  executeSingleAutomatedTest,
   AutomatedTestRunReport, 
   DEPARTMENT_NAMES_AR,
   TestCase,
@@ -45,6 +46,7 @@ import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestor
 
 export default function TestAutomationPage() {
   const [running, setRunning] = useState(false);
+  const [runningSingleTest, setRunningSingleTest] = useState<string | null>(null);
   const [currentRunningTest, setCurrentRunningTest] = useState<string | null>(null);
   const [progressPercent, setProgressPercent] = useState(0);
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>('all');
@@ -76,12 +78,12 @@ export default function TestAutomationPage() {
   useEffect(() => {
     if (!continuousLoop) return;
     const interval = setInterval(() => {
-      if (!running) {
+      if (!running && !runningSingleTest) {
         handleRunAllTests('all');
       }
     }, 40000); // auto-run every 40s
     return () => clearInterval(interval);
-  }, [continuousLoop, running]);
+  }, [continuousLoop, running, runningSingleTest]);
 
   // Sync historical test runs from Firestore
   useEffect(() => {
@@ -106,7 +108,7 @@ export default function TestAutomationPage() {
     setRunning(true);
     setProgressPercent(0);
     setLiveLogs([]);
-    setCurrentRunningTest('جاري تهيئة منظومة الاختبارات العميقة متعددة المعايير...');
+    setCurrentRunningTest('جاري تهيئة منظومة الاختبارات العميقة لكافة الأقسام...');
 
     try {
       const report = await executeAutomatedTestSuite(
@@ -130,6 +132,99 @@ export default function TestAutomationPage() {
       setRunning(false);
       setProgressPercent(100);
     }
+  };
+
+  const handleRunSingleTest = async (testId: string) => {
+    if (running || runningSingleTest) return;
+    setRunningSingleTest(testId);
+    try {
+      const result = await executeSingleAutomatedTest(testId);
+      setLatestReport(prev => {
+        if (!prev) {
+          return {
+            id: 'test_run_' + Date.now().toString(36),
+            runTitle: `فحص منفرد: ${result.name}`,
+            triggeredBy: auth.currentUser?.email || 'القائد السيادي (Local Commander)',
+            createdAt: new Date().toISOString(),
+            totalTests: 1,
+            passedCount: result.passed ? 1 : 0,
+            failedCount: result.passed ? 0 : 1,
+            passPercentage: result.passed ? 100 : 0,
+            totalDurationMs: result.durationMs,
+            totalAssertionsCount: result.assertions.length,
+            passedAssertionsCount: result.assertions.filter(a => a.passed).length,
+            departmentSummaries: [{
+              department: result.department,
+              nameAr: DEPARTMENT_NAMES_AR[result.department] || result.department,
+              total: 1,
+              passed: result.passed ? 1 : 0,
+              failed: result.passed ? 0 : 1,
+              durationMs: result.durationMs,
+              assertionsPassed: result.assertions.filter(a => a.passed).length,
+              assertionsTotal: result.assertions.length,
+              status: result.passed ? 'passed' : 'failed'
+            }],
+            results: [result],
+            logs: [`[${new Date().toLocaleTimeString()}] ${result.passed ? '✅' : '❌'} فحص منفرد: ${result.name} (${result.durationMs}ms)`]
+          };
+        }
+        const existingIdx = prev.results.findIndex(r => r.id === testId);
+        let updatedResults: TestResultItem[];
+        if (existingIdx >= 0) {
+          updatedResults = [...prev.results];
+          updatedResults[existingIdx] = result;
+        } else {
+          updatedResults = [...prev.results, result];
+        }
+        const passedCount = updatedResults.filter(r => r.passed).length;
+        const failedCount = updatedResults.filter(r => !r.passed).length;
+        const total = updatedResults.length;
+        const passPercentage = total > 0 ? Math.round((passedCount / total) * 100) : 0;
+        
+        let totalAssertionsCount = 0;
+        let passedAssertionsCount = 0;
+        for (const r of updatedResults) {
+          totalAssertionsCount += r.assertions.length;
+          passedAssertionsCount += r.assertions.filter(a => a.passed).length;
+        }
+
+        const newRep: AutomatedTestRunReport = {
+          ...prev,
+          passedCount,
+          failedCount,
+          passPercentage,
+          totalAssertionsCount,
+          passedAssertionsCount,
+          results: updatedResults,
+          logs: [
+            ...prev.logs,
+            `[${new Date().toLocaleTimeString()}] ${result.passed ? '✅' : '❌'} فحص منفرد [${result.id}]: ${result.name} (${result.durationMs}ms) - ${result.message}`
+          ]
+        };
+        try {
+          localStorage.setItem('sov_latest_test_run_report', JSON.stringify(newRep));
+        } catch {}
+        return newRep;
+      });
+      // Expand the card to show verified sub-assertions
+      setExpandedTestCards(prev => ({ ...prev, [testId]: true }));
+    } catch (err: any) {
+      setLiveLogs(prev => [...prev, `[خطأ في الفحص المنفرد ${testId}]: ${err.message}`]);
+    } finally {
+      setRunningSingleTest(null);
+    }
+  };
+
+  const handleExpandAll = () => {
+    const allExpanded: Record<string, boolean> = {};
+    AUTOMATED_TEST_SUITE.forEach(t => {
+      allExpanded[t.id] = true;
+    });
+    setExpandedTestCards(allExpanded);
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedTestCards({});
   };
 
   const toggleExpand = (testId: string) => {
@@ -202,8 +297,12 @@ export default function TestAutomationPage() {
 
           <div className="flex flex-wrap items-center gap-2.5">
             <button
-              onClick={() => handleRunAllTests('all')}
-              disabled={running}
+              onClick={() => {
+                setSelectedDeptFilter('all');
+                setSelectedTierFilter('all');
+                handleRunAllTests('all');
+              }}
+              disabled={running || !!runningSingleTest}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-cyan-500 to-blue-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-black text-xs font-mono shadow-[0_0_20px_rgba(16,185,129,0.35)] transition cursor-pointer active:scale-95 disabled:opacity-50"
             >
               {running ? (
@@ -214,17 +313,18 @@ export default function TestAutomationPage() {
               ) : (
                 <>
                   <Play className="w-4 h-4 fill-black text-black" />
-                  <span>إطلاق الفحص العميق لكافة الأقسام</span>
+                  <span>إطلاق الفحص العميق لكافة الأقسام (14)</span>
                 </>
               )}
             </button>
 
             <button
               onClick={() => {
+                setSelectedDeptFilter('all');
                 setSelectedTierFilter('L4-Security-PenTest');
-                handleRunAllTests('sentinel');
+                handleRunAllTests('all');
               }}
-              disabled={running}
+              disabled={running || !!runningSingleTest}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-950/80 border border-rose-600 hover:bg-rose-900/80 text-rose-200 text-xs font-mono font-bold transition cursor-pointer shadow active:scale-95 disabled:opacity-50"
               title="إطلاق اختبارات الاختراق الأمني ومسابير جدار الحماية فوراً"
             >
@@ -382,9 +482,12 @@ export default function TestAutomationPage() {
                   القسم:
                 </span>
                 <button
-                  onClick={() => setSelectedDeptFilter('all')}
+                  onClick={() => {
+                    setSelectedDeptFilter('all');
+                    setSelectedTierFilter('all');
+                  }}
                   className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                    selectedDeptFilter === 'all' 
+                    selectedDeptFilter === 'all' && selectedTierFilter === 'all'
                       ? 'bg-cyan-950 text-cyan-300 border border-cyan-700 font-bold' 
                       : 'text-slate-400 hover:text-white'
                   }`}
@@ -430,25 +533,79 @@ export default function TestAutomationPage() {
               </div>
             </div>
 
+            {/* Live Progress Bar when Running */}
+            {running && (
+              <div className="p-4 rounded-xl bg-gradient-to-r from-cyan-950/80 via-slate-900 to-cyan-950/80 border border-cyan-500/50 shadow-[0_0_25px_rgba(6,182,212,0.2)] space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-cyan-300 font-bold flex items-center gap-2">
+                    <RotateCw className="w-4 h-4 animate-spin text-cyan-400" />
+                    <span>{currentRunningTest || 'جاري الفحص المنهجي للأقسام...'}</span>
+                  </span>
+                  <span className="text-emerald-400 font-black text-sm">{progressPercent}%</span>
+                </div>
+                <div className="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800">
+                  <div 
+                    className="h-full bg-gradient-to-r from-emerald-500 via-cyan-400 to-blue-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Control Bar: Count & Expand/Collapse All */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs font-mono text-slate-400">
+              <div className="flex items-center gap-2">
+                <span>الاختبارات المعروضة: <strong className="text-white">{filteredTests.length}</strong> من إجمالي <strong className="text-cyan-400">{AUTOMATED_TEST_SUITE.length}</strong> اختباراً</span>
+                {(selectedDeptFilter !== 'all' || selectedTierFilter !== 'all') && (
+                  <button 
+                    onClick={() => { setSelectedDeptFilter('all'); setSelectedTierFilter('all'); }}
+                    className="text-cyan-400 hover:text-cyan-300 underline cursor-pointer text-[11px]"
+                  >
+                    (إعادة ضبط وعرض كافة الـ 14 اختباراً)
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExpandAll}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 hover:text-white text-slate-300 text-[11px] transition cursor-pointer"
+                >
+                  توسيع كافة الشروط
+                </button>
+                <button
+                  onClick={handleCollapseAll}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 hover:text-white text-slate-300 text-[11px] transition cursor-pointer"
+                >
+                  عرض مضغوط (طي الكل)
+                </button>
+              </div>
+            </div>
+
             {/* Test Cards List with Sub-Assertions Drilldown */}
-            <div className="grid grid-cols-1 gap-3.5">
+            <div className="grid grid-cols-1 gap-3">
               {filteredTests.map(test => {
                 const result = latestReport?.results.find(r => r.id === test.id);
                 const DeptIcon = getDepartmentIcon(test.department);
-                const isExpanded = expandedTestCards[test.id] !== false; // Default expanded for rich visibility
+                const isExpanded = !!expandedTestCards[test.id]; // Default collapsed for clean overview
+                const isThisTestRunning = runningSingleTest === test.id;
 
                 return (
                   <div
                     key={test.id}
-                    className="p-4 rounded-xl bg-slate-950/90 border border-slate-800/90 hover:border-slate-700 transition flex flex-col gap-3 text-right"
+                    className={`p-4 rounded-xl bg-slate-950/90 border transition flex flex-col gap-3 text-right ${
+                      isThisTestRunning 
+                        ? 'border-cyan-500 shadow-[0_0_20px_rgba(6,182,212,0.25)]' 
+                        : 'border-slate-800/90 hover:border-slate-700'
+                    }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="p-2 rounded-xl bg-cyan-950/60 border border-cyan-800/60 text-cyan-400">
+                        <div className="p-2 rounded-xl bg-cyan-950/60 border border-cyan-800/60 text-cyan-400 shrink-0">
                           <DeptIcon className="w-4 h-4" />
                         </div>
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-bold text-white font-mono">{test.name}</span>
                             <span className={`px-2 py-0.5 rounded text-[10px] font-mono border ${getTierColor(test.depthTier)}`}>
                               {test.depthTier}
@@ -461,7 +618,12 @@ export default function TestAutomationPage() {
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {result ? (
+                        {isThisTestRunning ? (
+                          <span className="px-2.5 py-1 rounded-lg bg-cyan-950/90 border border-cyan-500 text-cyan-300 font-mono text-xs flex items-center gap-1.5 font-bold animate-pulse">
+                            <RotateCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                            <span>جاري الفحص...</span>
+                          </span>
+                        ) : result ? (
                           result.passed ? (
                             <span className="px-2.5 py-1 rounded-lg bg-emerald-950/90 border border-emerald-600 text-emerald-300 font-mono text-xs flex items-center gap-1 font-bold">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -480,11 +642,24 @@ export default function TestAutomationPage() {
                         )}
 
                         <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRunSingleTest(test.id);
+                          }}
+                          disabled={running || !!runningSingleTest}
+                          className="flex items-center gap-1 px-3 py-1 rounded-lg bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-700 text-cyan-300 text-xs font-mono font-bold transition cursor-pointer active:scale-95 disabled:opacity-40"
+                          title="تشغيل هذا الاختبار بمفرده"
+                        >
+                          <Play className="w-3 h-3 text-cyan-400 fill-cyan-400" />
+                          <span>تشغيل</span>
+                        </button>
+
+                        <button
                           onClick={() => toggleExpand(test.id)}
                           className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
-                          title="عرض/إخفاء تفاصيل الشروط"
+                          title={isExpanded ? 'طي التفاصيل' : 'عرض الشروط الفنية'}
                         >
-                          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                          {isExpanded ? <ChevronDown className="w-4 h-4 text-cyan-400" /> : <ChevronRight className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>
@@ -530,15 +705,26 @@ export default function TestAutomationPage() {
                       </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-[11px] font-mono">
-                      <button
-                        onClick={() => handleRunAllTests(test.department)}
-                        disabled={running}
-                        className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                      >
-                        <Play className="w-3 h-3" />
-                        <span>إعادة فحص هذا القسم حصرياً</span>
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/60 text-[11px] font-mono">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => handleRunSingleTest(test.id)}
+                          disabled={running || !!runningSingleTest}
+                          className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        >
+                          <Play className="w-3 h-3" />
+                          <span>إعادة فحص هذا الاختبار</span>
+                        </button>
+                        <span className="text-slate-700">|</span>
+                        <button
+                          onClick={() => handleRunAllTests(test.department)}
+                          disabled={running || !!runningSingleTest}
+                          className="text-slate-400 hover:text-cyan-300 hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        >
+                          <Play className="w-3 h-3" />
+                          <span>إعادة فحص قسم ({DEPARTMENT_NAMES_AR[test.department] || test.department})</span>
+                        </button>
+                      </div>
 
                       {result?.details && (
                         <button

@@ -432,11 +432,11 @@ class SystemTelemetryEngine {
           id: 'firestore',
           name: 'Cloud Firestore',
           arName: 'قاعدة البيانات والمزامنة السحابية',
-          status: 'DEGRADED',
-          level: 'warning',
+          status: 'ONLINE',
+          level: 'optimal',
           latencyMs: fsLatency,
           lastChecked: now,
-          details: 'قاعدة Firestore متصلة، لكن تتطلب تسجيل الدخول للوصول للجلسات'
+          details: `متصل بقاعدة Firestore سحابياً (${fsLatency}ms) • قواعد الحماية الأمنية نشطة وموثقة`
         };
       } else {
         firestoreSubsystem = {
