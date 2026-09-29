@@ -1,6 +1,26 @@
 {
   "recommendations": [
+    // Database & SQL Tooling
     "ms-mssql.mssql",
-    "mtxr.sqltools"
+    "mtxr.sqltools",
+
+    // Code Quality, Formatters & Diagnostics
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "usernamehw.errorlens",
+
+    // Frontend, React & Tailwind Intelligence
+    "bradlc.vscode-tailwindcss",
+    "formulahendry.auto-rename-tag",
+    "christian-kohler.path-intellisense",
+
+    // Python Backend Diagnostics
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+
+    // Cloud, Docker & Version Control
+    "ms-azuretools.vscode-docker",
+    "eamodio.gitlens",
+    "github.vscode-github-actions"
   ]
 }
