@@ -1,0 +1,12 @@
+specVersion: "v1"
+serviceId: "sovereign-commander-service"
+location: "us-central1"
+schema:
+  source: "./schema"
+  datasource:
+    postgresql:
+      database: "sovereign_enterprise_db"
+      cloudSql:
+        instanceId: "sovereign-sql-instance"
+      schemaValidation: "COMPATIBLE"
+connectorDirs: ["./connector"]

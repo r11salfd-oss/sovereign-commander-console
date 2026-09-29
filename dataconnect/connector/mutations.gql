@@ -1,0 +1,146 @@
+# ============================================================================
+# SOVEREIGN COMMANDER CONSOLE - AUTHORIZED GRAPHQL MUTATIONS
+# Security: Zero-Trust Row-Level Security with @auth(level: USER) & auth.uid
+# Chain Key ID: 360ea36c28e66d9d
+# ============================================================================
+
+# 1. Upsert Authenticated Commander Profile
+mutation UpsertCurrentUser($email: String!, $displayName: String) @auth(level: USER) {
+  user_upsert(data: {
+    uid_expr: "auth.uid",
+    email: $email,
+    displayName: $displayName
+  })
+}
+
+# 2. Lodge New HITL Approval Request
+mutation CreateApproval(
+  $agentId: String!,
+  $actionType: String!,
+  $risk: String!,
+  $summary: String!,
+  $reason: String!,
+  $payloadJson: String,
+  $expiresAt: Timestamp!
+) @auth(level: USER) {
+  sovereignApproval_insert(data: {
+    creator: { uid_expr: "auth.uid" },
+    agentId: $agentId,
+    actionType: $actionType,
+    risk: $risk,
+    summary: $summary,
+    reason: $reason,
+    payloadJson: $payloadJson,
+    expiresAt: $expiresAt
+  })
+}
+
+# 3. Update Approval Lifecycle State (Approve, Reject, Execute)
+mutation UpdateApprovalStatus(
+  $id: UUID!,
+  $status: String!,
+  $signature: String,
+  $executionResultJson: String
+) @auth(level: USER) {
+  sovereignApproval_update(
+    key: { id: $id },
+    data: {
+      status: $status,
+      signature: $signature,
+      executionResultJson: $executionResultJson,
+      resolvedAt_expr: "request.time"
+    }
+  )
+}
+
+# 4. Initialize New Sovereign Chat Session
+mutation CreateChatSession(
+  $title: String!,
+  $chatMode: String!,
+  $selectedAgent: String,
+  $selectedCouncilJson: String
+) @auth(level: USER) {
+  sovereignChatSession_insert(data: {
+    creator: { uid_expr: "auth.uid" },
+    title: $title,
+    chatMode: $chatMode,
+    selectedAgent: $selectedAgent,
+    selectedCouncilJson: $selectedCouncilJson
+  })
+}
+
+# 5. Append Message to Active Conversation Session
+mutation AppendChatMessage(
+  $sessionId: UUID!,
+  $sender: String!,
+  $text: String!,
+  $agent: String,
+  $modelRole: String,
+  $model: String,
+  $imageUrl: String
+) @auth(level: USER) {
+  sovereignChatMessage_insert(data: {
+    session: { id: $sessionId },
+    sender: $sender,
+    text: $text,
+    agent: $agent,
+    modelRole: $modelRole,
+    model: $model,
+    imageUrl: $imageUrl
+  })
+}
+
+# 6. Append Immutable Block to Audit Ledger
+mutation LodgeAuditBlock(
+  $blockIndex: Int64!,
+  $previousHash: String!,
+  $currentHash: String!,
+  $merkleRoot: String!,
+  $eventType: String!,
+  $originAgent: String!,
+  $payloadJson: String!,
+  $signature: String
+) @auth(level: USER) {
+  sovereignAuditBlock_insert(data: {
+    blockIndex: $blockIndex,
+    previousHash: $previousHash,
+    currentHash: $currentHash,
+    merkleRoot: $merkleRoot,
+    eventType: $eventType,
+    originAgent: $originAgent,
+    payloadJson: $payloadJson,
+    signature: $signature
+  })
+}
+
+# 7. Record Automated Deep Test Execution Report
+mutation RecordTestRun(
+  $runTitle: String!,
+  $triggeredBy: String!,
+  $totalTests: Int!,
+  $passedCount: Int!,
+  $failedCount: Int!,
+  $passPercentage: Int!,
+  $totalDurationMs: Int!,
+  $totalAssertionsCount: Int!,
+  $passedAssertionsCount: Int!,
+  $resultsJson: String!,
+  $logsJson: String!,
+  $aiEvaluationJson: String
+) @auth(level: USER) {
+  sovereignTestRun_insert(data: {
+    creator: { uid_expr: "auth.uid" },
+    runTitle: $runTitle,
+    triggeredBy: $triggeredBy,
+    totalTests: $totalTests,
+    passedCount: $passedCount,
+    failedCount: $failedCount,
+    passPercentage: $passPercentage,
+    totalDurationMs: $totalDurationMs,
+    totalAssertionsCount: $totalAssertionsCount,
+    passedAssertionsCount: $passedAssertionsCount,
+    resultsJson: $resultsJson,
+    logsJson: $logsJson,
+    aiEvaluationJson: $aiEvaluationJson
+  })
+}
