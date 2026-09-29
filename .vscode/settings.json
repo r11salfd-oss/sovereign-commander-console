@@ -90,7 +90,7 @@
   },
 
   // --- Python Environment & Diagnostics ---
-  "python.languageServer": "Pylance",
+  "python.languageServer": "Jedi",
   "python.analysis.typeCheckingMode": "basic",
   "python.analysis.autoImportCompletions": true,
   "python.analysis.diagnosticMode": "workspace",
@@ -100,6 +100,7 @@
   },
 
   // --- SQL Server (mssql) & Database Intelligence ---
+  "mssql.autoDisableNonTSqlLanguageService": true,
   "mssql.format.keywordCasing": "uppercase",
   "mssql.format.datatypeCasing": "uppercase",
   "mssql.intelliSense.enableIntelliSense": true,
@@ -153,6 +154,10 @@
       "strings": "off"
     }
   },
+
+  // --- Telemetry & Notification Hygiene ---
+  "redhat.telemetry.enabled": false,
+  "telemetry.telemetryLevel": "off",
 
   // --- Tailwind CSS & UI Tooling ---
   "tailwindCSS.includeLanguages": {

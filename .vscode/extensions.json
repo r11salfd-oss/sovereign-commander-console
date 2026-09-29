@@ -16,7 +16,6 @@
 
     // Python Backend Diagnostics
     "ms-python.python",
-    "ms-python.vscode-pylance",
 
     // Cloud, Docker & Version Control
     "ms-azuretools.vscode-docker",
