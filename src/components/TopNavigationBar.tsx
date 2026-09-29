@@ -20,7 +20,7 @@ import {
   AlertTriangle,
   Search
 } from 'lucide-react';
-import { auth, logoutUser } from '../firebase';
+import { auth, logoutUser, loginWithGoogle } from '../firebase';
 import { User } from 'firebase/auth';
 import TelemetryDiagnosticsModal from './TelemetryDiagnosticsModal';
 import SystemMonitor, { LatencyThresholdAlert } from './SystemMonitor';
@@ -302,7 +302,6 @@ export default function TopNavigationBar() {
               <button 
                 onClick={async () => {
                   try {
-                    const { loginWithGoogle } = await import('../firebase');
                     await loginWithGoogle();
                   } catch (e: any) {
                     console.error('Login error:', e);
