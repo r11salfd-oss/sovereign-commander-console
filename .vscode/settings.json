@@ -1,0 +1,58 @@
+{
+  "mssql.format.keywordCasing": "uppercase",
+  "mssql.format.datatypeCasing": "uppercase",
+  "mssql.intelliSense.enableIntelliSense": true,
+  "mssql.intelliSense.enableQuickInfo": true,
+  "mssql.intelliSense.enableSuggestions": true,
+  "mssql.intelliSense.lowerCaseSuggestions": false,
+  "mssql.query.executionTimeout": 60,
+  "mssql.showBatchTime": true,
+  "mssql.splitPaneSelection": "next",
+  "mssql.resultsFontSize": 13,
+  "mssql.resultsFontFamily": "Consolas, 'Courier New', monospace",
+  "mssql.copyIncludeHeaders": true,
+  "mssql.messagesDefaultOpen": false,
+  "mssql.logDebugInfo": false,
+  "mssql.connections": [
+    {
+      "server": "(localdb)\\MSSQLLocalDB",
+      "database": "sovereign_enterprise_db",
+      "authenticationType": "Integrated",
+      "profileName": "Sovereign-LocalDB",
+      "group": "Sovereign Enterprise Fleet",
+      "savePassword": true,
+      "connectTimeout": 30
+    },
+    {
+      "server": "localhost",
+      "database": "sovereign_enterprise_db",
+      "authenticationType": "SqlLogin",
+      "user": "sa",
+      "profileName": "Sovereign-Dev-Server",
+      "group": "Sovereign Enterprise Fleet",
+      "savePassword": false,
+      "connectTimeout": 30
+    }
+  ],
+  "mssql.connectionGroups": [
+    {
+      "name": "Sovereign Enterprise Fleet",
+      "id": "sovereign-root-group",
+      "description": "Sovereign Command Console Database Fleet"
+    }
+  ],
+  "[sql]": {
+    "editor.defaultFormatter": "ms-mssql.mssql",
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.suggestOnTriggerCharacters": true,
+    "editor.quickSuggestions": {
+      "other": "on",
+      "comments": "off",
+      "strings": "off"
+    }
+  },
+  "files.associations": {
+    "*.sql": "sql"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "recommendations": [
+    "ms-mssql.mssql",
+    "mtxr.sqltools"
+  ]
+}
