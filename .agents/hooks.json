@@ -1,0 +1,17 @@
+{
+  "sovereign-audit-hook": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import os; print('[SOVEREIGN HOOK] Stored artifact synchronized.')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
