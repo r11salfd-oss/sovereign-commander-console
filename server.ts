@@ -11,6 +11,7 @@ import fs from 'fs';
 import util from 'util';
 import { spawn, exec } from 'child_process';
 import { sovereignKernelInstance } from './src/os/kernelEngine';
+import { globalSovereignMcpServer } from './src/services/sovereignMcpServer';
 
 // Auto-load .env environment file if present
 if (fs.existsSync('.env')) {
@@ -286,23 +287,53 @@ async function startServer() {
     res.json({
       ok: true,
       status: mcpServerStatus,
-      servers: ['@modelcontextprotocol/server-everything'],
-      protocol: 'v1.0.0'
+      servers: ['@modelcontextprotocol/server-everything', 'sovereign-commander-mcp-server'],
+      protocol: 'v1.0.0',
+      activeServerInfo: globalSovereignMcpServer.serverInfo
     });
   });
 
   // MCP Protocol Subsystem Tools Catalog Endpoint
   app.get('/api/mcp/tools', (req, res) => {
+    const sovereignTools = globalSovereignMcpServer.getToolsList();
     res.json({
       ok: true,
       status: mcpServerStatus,
-      tools: [
-        { name: 'read_workspace_file', description: 'Read sovereign workspace file safely' },
-        { name: 'execute_sandboxed_command', description: 'Run sandboxed CLI inspection command' },
-        { name: 'verify_hash_integrity', description: 'Validate SHA-256 cryptographic chain state' },
-        { name: 'inspect_system_telemetry', description: 'Query kernel and memory health metrics' }
-      ]
+      tools: sovereignTools
     });
+  });
+
+  // MCP Protocol Subsystem Resources Endpoint
+  app.get('/api/mcp/resources', (req, res) => {
+    res.json({
+      ok: true,
+      resources: globalSovereignMcpServer.getResourcesList()
+    });
+  });
+
+  // MCP Protocol Subsystem Prompts Endpoint
+  app.get('/api/mcp/prompts', (req, res) => {
+    res.json({
+      ok: true,
+      prompts: globalSovereignMcpServer.getPromptsList()
+    });
+  });
+
+  // MCP JSON-RPC 2.0 Dispatcher Endpoint
+  app.post('/api/mcp/rpc', async (req, res) => {
+    try {
+      const response = await globalSovereignMcpServer.handleJsonRpcMessage(req.body);
+      res.json(response);
+    } catch (err: any) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        id: req.body?.id || null,
+        error: {
+          code: -32603,
+          message: `Internal Sovereign MCP Dispatcher Error: ${err.message || String(err)}`
+        }
+      });
+    }
   });
 
   // Helper to compute realistic, generous memory allocations (512MB capacity ceiling)
