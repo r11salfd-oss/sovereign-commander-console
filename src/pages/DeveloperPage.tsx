@@ -22,9 +22,11 @@ import {
   Laptop,
   Folder,
   Clock,
-  CheckCircle
+  CheckCircle,
+  Server
 } from 'lucide-react';
 import { getGoogleAuthHeaders } from '../firebase';
+import ServersCenterPanel from '../components/ServersCenterPanel';
 
 interface CliToken {
   id: string;
@@ -47,7 +49,7 @@ interface CommandHistoryItem {
 }
 
 export default function DeveloperPage() {
-  const [activeTab, setActiveTab] = useState<'terminal' | 'connect' | 'docs' | 'api'>('terminal');
+  const [activeTab, setActiveTab] = useState<'terminal' | 'connect' | 'docs' | 'api' | 'servers-center'>('terminal');
 
   // Real Terminal & Shell State
   const [currentCwd, setCurrentCwd] = useState<string>('/app/applet');
@@ -280,6 +282,9 @@ export default function DeveloperPage() {
     { url: '/api/hitl/ping', method: 'GET', desc: 'HITL core sentinel ping and environment specs' },
     { url: '/api/brainmap', method: 'GET', desc: 'Inspect live cognitive matrix model mappings' },
     { url: '/api/mcp/status', method: 'GET', desc: 'Check Model Context Protocol (MCP) server daemon status' },
+    { url: '/api/mcp/servers', method: 'GET', desc: 'Inspect full catalog of 6 MCP servers + Sovereign Commander' },
+    { url: '/api/lsp/servers', method: 'GET', desc: 'Inspect all 6 Language Server Protocol (LSP) engines' },
+    { url: '/api/servers-center/overview', method: 'GET', desc: 'Query unified E:\\Servers-Center device hub status' },
     { url: '/api/hitl/audit/verify', method: 'GET', desc: 'Cryptographic ledger hash validation probe' },
     { url: '/api/agents/metrics', method: 'GET', desc: 'Real 24h deterministic agent operations telemetry' }
   ];
@@ -352,6 +357,17 @@ export default function DeveloperPage() {
             >
               <Code2 className="w-3.5 h-3.5" />
               <span>فحص الـ API</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('servers-center')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                activeTab === 'servers-center' 
+                  ? 'bg-cyan-600 text-white font-bold shadow-[0_0_12px_rgba(6,182,212,0.35)]' 
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Server className="w-3.5 h-3.5" />
+              <span>مركز الخوادم (MCP & LSP)</span>
             </button>
           </div>
         </div>
@@ -842,6 +858,11 @@ export default function DeveloperPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ── TAB 5: SERVERS CENTER (MCP & LSP UNIFIED CONTROL) ── */}
+        {activeTab === 'servers-center' && (
+          <ServersCenterPanel />
         )}
 
       </div>

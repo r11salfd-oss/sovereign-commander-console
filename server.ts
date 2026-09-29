@@ -12,6 +12,7 @@ import util from 'util';
 import { spawn, exec } from 'child_process';
 import { sovereignKernelInstance } from './src/os/kernelEngine';
 import { globalSovereignMcpServer } from './src/services/sovereignMcpServer';
+import { globalServersCenterRegistry } from './src/services/serversCenterRegistry';
 
 // Auto-load .env environment file if present
 if (fs.existsSync('.env')) {
@@ -282,15 +283,46 @@ async function startServer() {
     ]);
   });
 
-  // MCP Protocol Subsystem Status Endpoint
+  // MCP Protocol Subsystem Status Endpoint (All 6 MCP Servers + Sovereign Commander)
   app.get('/api/mcp/status', (req, res) => {
+    const overview = globalServersCenterRegistry.getOverview();
     res.json({
       ok: true,
       status: mcpServerStatus,
-      servers: ['@modelcontextprotocol/server-everything', 'sovereign-commander-mcp-server'],
+      servers: overview.mcpSummary.servers.map(s => s.id),
       protocol: 'v1.0.0',
-      activeServerInfo: globalSovereignMcpServer.serverInfo
+      activeServerInfo: globalSovereignMcpServer.serverInfo,
+      mcpCount: overview.mcpSummary.total,
+      lspCount: overview.lspSummary.total
     });
+  });
+
+  // MCP Servers Catalog Endpoint (All 6 MCP Servers + Sovereign Commander)
+  app.get('/api/mcp/servers', (req, res) => {
+    const overview = globalServersCenterRegistry.getOverview();
+    res.json({
+      ok: true,
+      total: overview.mcpSummary.total,
+      onlineCount: overview.mcpSummary.onlineCount,
+      servers: overview.mcpSummary.servers
+    });
+  });
+
+  // LSP Servers Catalog Endpoint (All 6 LSP Servers: TypeScript, ESLint, Bash, YAML, Pyright, DotNet)
+  app.get('/api/lsp/servers', (req, res) => {
+    const overview = globalServersCenterRegistry.getOverview();
+    res.json({
+      ok: true,
+      total: overview.lspSummary.total,
+      readyCount: overview.lspSummary.readyCount,
+      servers: overview.lspSummary.servers
+    });
+  });
+
+  // Unified E:\Servers-Center Overview Endpoint
+  app.get('/api/servers-center/overview', (req, res) => {
+    const overview = globalServersCenterRegistry.getOverview();
+    res.json(overview);
   });
 
   // MCP Protocol Subsystem Tools Catalog Endpoint
