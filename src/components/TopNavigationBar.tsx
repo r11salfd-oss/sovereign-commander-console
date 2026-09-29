@@ -143,6 +143,7 @@ export default function TopNavigationBar() {
 
   // Mouse drag-to-scroll handlers
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     const el = navScrollRef.current;
     if (!el) return;
     isDraggingRef.current = true;
@@ -156,20 +157,24 @@ export default function TopNavigationBar() {
     const el = navScrollRef.current;
     if (!el) return;
     const currentX = e.pageX - el.offsetLeft;
-    const walk = (currentX - startXRef.current) * 1.3;
-    if (Math.abs(walk) > 4) {
+    const diff = currentX - startXRef.current;
+    if (Math.abs(diff) > 25) {
       hasDraggedRef.current = true;
+      el.scrollLeft = startScrollLeftRef.current - diff * 1.2;
+      updateScrollIndicators();
     }
-    el.scrollLeft = startScrollLeftRef.current - walk;
-    updateScrollIndicators();
   };
 
   const handleMouseUp = () => {
     isDraggingRef.current = false;
+    setTimeout(() => {
+      hasDraggedRef.current = false;
+    }, 40);
   };
 
   const handleMouseLeave = () => {
     isDraggingRef.current = false;
+    hasDraggedRef.current = false;
   };
 
   // Auto-scroll active item into visible center on route change
@@ -358,6 +363,7 @@ export default function TopNavigationBar() {
                     onClick={(e) => {
                       if (hasDraggedRef.current) {
                         e.preventDefault();
+                        hasDraggedRef.current = false;
                       }
                     }}
                     className={`flex flex-shrink-0 items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all duration-200 font-mono text-xs border ${

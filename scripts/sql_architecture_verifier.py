@@ -5,8 +5,7 @@ Validates relational schema logic, constraints, window functions, and cryptograp
 """
 
 from __future__ import annotations
-# pyrefly: ignore [parse-error]
-``````````
+
 import hashlib
 import json
 import sqlite3
