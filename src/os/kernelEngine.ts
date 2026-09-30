@@ -680,7 +680,7 @@ export class SovereignKernel {
   public signModule(name: string, authorAgent: string, ring: 'RING_0_KERNEL' | 'RING_1_DRIVERS' | 'RING_2_SERVICES' | 'RING_3_USER'): SignedKernelModule {
     const rawData = `${name}:${authorAgent}:${ring}:${Date.now()}`;
     const hash = 'a' + Math.random().toString(16).substring(2) + Math.random().toString(16).substring(2);
-    const sig = `ed25519:${hash.slice(0, 16)}...${hash.slice(-8)}`;
+    const sig = `ed25519:${hash.slice(0, 16)}...${hash.slice(-8)}#${rawData.length}`;
 
     const mod: SignedKernelModule = {
       name,

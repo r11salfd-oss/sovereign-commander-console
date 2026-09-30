@@ -1,0 +1,5 @@
+connectorId: "sovereign-connector"
+generate:
+  javascriptSdk:
+    outputDir: "../src/lib/dataconnect"
+    package: "@sovereign/dataconnect"

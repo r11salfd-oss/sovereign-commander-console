@@ -1,0 +1,91 @@
+# ============================================================================
+# SOVEREIGN COMMANDER CONSOLE - FIREBASE SQL CONNECT (DATA CONNECT) SCHEMA
+# Cloud SQL for PostgreSQL Relational Database Schema
+# Chain Key ID: 360ea36c28e66d9d
+# ============================================================================
+
+# 1. User Profile & Authentication Anchor
+type User @table(name: "users", key: "uid") {
+  uid: String! @default(expr: "auth.uid")
+  email: String! @unique
+  displayName: String
+  role: String @default(value: "commander")
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# 2. Human-In-The-Loop (HITL) Sovereign Approvals
+type SovereignApproval @table(name: "sovereign_approvals") {
+  id: UUID! @default(expr: "uuidV4()")
+  creator: User!
+  agentId: String!
+  actionType: String!
+  status: String! @default(value: "pending")
+  risk: String! @default(value: "medium")
+  summary: String!
+  reason: String!
+  signature: String
+  payloadJson: String
+  executionResultJson: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  expiresAt: Timestamp!
+  resolvedAt: Timestamp
+}
+
+# 3. Sovereign Chat Sessions
+type SovereignChatSession @table(name: "sovereign_chat_sessions") {
+  id: UUID! @default(expr: "uuidV4()")
+  creator: User!
+  title: String!
+  chatMode: String! @default(value: "solo")
+  selectedAgent: String
+  selectedCouncilJson: String
+  lastMessage: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# 4. Sovereign Chat Messages (Relational One-to-Many with ChatSession)
+type SovereignChatMessage @table(name: "sovereign_chat_messages") {
+  id: UUID! @default(expr: "uuidV4()")
+  session: SovereignChatSession!
+  sender: String!
+  agent: String
+  modelRole: String
+  model: String
+  text: String!
+  imageUrl: String
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# 5. Cryptographic Tamper-Evident Audit Ledger
+type SovereignAuditBlock @table(name: "sovereign_audit_blocks") {
+  id: UUID! @default(expr: "uuidV4()")
+  blockIndex: Int64!
+  previousHash: String!
+  currentHash: String!
+  merkleRoot: String!
+  eventType: String!
+  originAgent: String!
+  payloadJson: String!
+  signature: String
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# 6. Automated Testing Suite Execution Ledger
+type SovereignTestRun @table(name: "sovereign_test_runs") {
+  id: UUID! @default(expr: "uuidV4()")
+  creator: User!
+  runTitle: String!
+  triggeredBy: String!
+  totalTests: Int!
+  passedCount: Int!
+  failedCount: Int!
+  passPercentage: Int!
+  totalDurationMs: Int!
+  totalAssertionsCount: Int!
+  passedAssertionsCount: Int!
+  resultsJson: String!
+  logsJson: String!
+  aiEvaluationJson: String
+  createdAt: Timestamp! @default(expr: "request.time")
+}

@@ -12,8 +12,7 @@ import {
   X, 
   CheckCircle2, 
   AlertTriangle, 
-  XCircle,
-  ExternalLink
+  XCircle
 } from 'lucide-react';
 import { useSystemTelemetry } from '../hooks/useSystemTelemetry';
 import { HealthStatusLevel } from '../services/systemTelemetryService';

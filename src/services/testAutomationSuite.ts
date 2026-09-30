@@ -1,6 +1,27 @@
 import { db, auth, sanitizeForFirestore } from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
 
+export async function safeFetch(input: RequestInfo | URL, init?: RequestInit, timeoutMs = 4000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(input, { ...init, signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
+
+export async function safeJson(res: Response): Promise<any> {
+  try {
+    return await res.json();
+  } catch {
+    return {};
+  }
+}
+
 export interface SubAssertion {
   name: string;
   condition: boolean;
@@ -103,12 +124,16 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const start = performance.now();
       const assertions: SubAssertion[] = [];
       
-      // Concurrently dispatch 5 requests
+      // Concurrently dispatch 5 requests with safeFetch and timeout
       const promises = Array.from({ length: 5 }).map(() => 
-        fetch('/api/health').then(async r => ({
+        safeFetch('/api/health', undefined, 4000).then(async r => ({
           status: r.status,
           contentType: r.headers.get('content-type') || '',
-          data: await r.json()
+          data: await safeJson(r)
+        })).catch(err => ({
+          status: 500,
+          contentType: 'application/json',
+          data: { error: err.message }
         }))
       );
 
@@ -176,8 +201,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const start = performance.now();
       const assertions: SubAssertion[] = [];
 
-      const res = await fetch('/api/brainmap');
-      const data = await res.json();
+      let res: Response;
+      let data: any = {};
+      try {
+        res = await safeFetch('/api/brainmap', undefined, 4000);
+        data = await safeJson(res);
+      } catch (err: any) {
+        res = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        data = {};
+      }
       const durationMs = Math.round(performance.now() - start);
 
       const hasModels = data.models || data;
@@ -317,21 +349,28 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const start = performance.now();
       const assertions: SubAssertion[] = [];
 
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-test-origin': 'SOVEREIGN_QA_CORPS'
-        },
-        body: JSON.stringify({
-          message: 'PING_AUTOMATION_TEST_PROBE: التحقق الشامل من ممر الذكاء الاصطناعي السيادي',
-          agent: 'lead-engineer',
-          model: 'gemini-3.1-flash-lite'
-        })
-      });
+      let res: Response;
+      let data: any = {};
+      try {
+        res = await safeFetch('/api/chat', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-test-origin': 'SOVEREIGN_QA_CORPS'
+          },
+          body: JSON.stringify({
+            message: 'PING_AUTOMATION_TEST_PROBE: التحقق الشامل من ممر الذكاء الاصطناعي السيادي',
+            agent: 'lead-engineer',
+            model: 'gemini-3.1-flash-lite'
+          })
+        }, 5000);
+        data = await safeJson(res);
+      } catch (err: any) {
+        res = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        data = {};
+      }
 
       const durationMs = Math.round(performance.now() - start);
-      const data = await res.json();
 
       assertions.push({
         name: 'استجابة ممر الذكاء الاصطناعي (Gateway HTTP Status 200)',
@@ -403,12 +442,19 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const signature = `ED25519-SOV-${hashHex.slice(0, 24).toUpperCase()}`;
 
       // Verify on backend
-      const verifyRes = await fetch('/api/qa/crypto-verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payload: validPayload, signature, algorithm: 'SHA-256' })
-      });
-      const verifyData = await verifyRes.json();
+      let verifyRes: Response;
+      let verifyData: any = {};
+      try {
+        verifyRes = await safeFetch('/api/qa/crypto-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payload: validPayload, signature, algorithm: 'SHA-256' })
+        }, 4000);
+        verifyData = await safeJson(verifyRes);
+      } catch (err: any) {
+        verifyRes = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        verifyData = {};
+      }
 
       assertions.push({
         name: 'قبول وتصديق التوقيع المشفر الأصلي (Authentic Signature Verification)',
@@ -435,8 +481,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       });
 
       // 3. Queue state verification
-      const queueRes = await fetch('/api/hitl/approvals');
-      const queueData = await queueRes.json();
+      let queueRes: Response;
+      let queueData: any = {};
+      try {
+        queueRes = await safeFetch('/api/hitl/approvals', undefined, 4000);
+        queueData = await safeJson(queueRes);
+      } catch (err: any) {
+        queueRes = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        queueData = {};
+      }
       assertions.push({
         name: 'سلامة طابور الحوكمة السيادية (HITL Approvals Queue Health)',
         condition: queueRes.ok && queueData.ok === true,
@@ -471,8 +524,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const assertions: SubAssertion[] = [];
 
       // Fetch live verify endpoint
-      const res = await fetch('/api/hitl/audit/verify');
-      const data = await res.json();
+      let res: Response;
+      let data: any = {};
+      try {
+        res = await safeFetch('/api/hitl/audit/verify', undefined, 4000);
+        data = await safeJson(res);
+      } catch (err: any) {
+        res = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        data = {};
+      }
 
       assertions.push({
         name: 'سلامة نقطة التحقق من سلسلة الكتل (Ledger Verify Endpoint Status)',
@@ -675,8 +735,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const start = performance.now();
       const assertions: SubAssertion[] = [];
 
-      const res = await fetch('/api/kernel/status');
-      const data = await res.json();
+      let res: Response;
+      let data: any = {};
+      try {
+        res = await safeFetch('/api/kernel/status', undefined, 4000);
+        data = await safeJson(res);
+      } catch (err: any) {
+        res = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        data = {};
+      }
 
       assertions.push({
         name: 'استجابة متحكم النواة والطرفية (Kernel Status Endpoint Status)',
@@ -732,7 +799,7 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       // Probe 1: War Chest Vault Access
       let p1Status = 0;
       try {
-        const probe1 = await fetch('/api/workspace/preview?path=' + encodeURIComponent('/workspace/SOVEREIGN_WAR_CHEST/vault.key'));
+        const probe1 = await safeFetch('/api/workspace/preview?path=' + encodeURIComponent('/workspace/SOVEREIGN_WAR_CHEST/vault.key'), undefined, 4000);
         p1Status = probe1.status;
       } catch (e: any) {
         p1Status = 403; // Blocked at client/proxy sandbox
@@ -748,7 +815,7 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       // Probe 2: Directory Traversal (/etc/passwd)
       let p2Status = 0;
       try {
-        const probe2 = await fetch('/api/workspace/preview?path=' + encodeURIComponent('../../../../etc/passwd'));
+        const probe2 = await safeFetch('/api/workspace/preview?path=' + encodeURIComponent('../../../../etc/passwd'), undefined, 4000);
         p2Status = probe2.status;
       } catch (e: any) {
         p2Status = 403; // Blocked at client/proxy sandbox
@@ -764,7 +831,7 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       // Probe 3: Direct Pen-Test Security Boundary Probe
       let p3Status = 0;
       try {
-        const probe3 = await fetch('/api/qa/pen-test?probe=' + encodeURIComponent('BUFFER_OVERFLOW_ATTEMPT'));
+        const probe3 = await safeFetch('/api/qa/pen-test?probe=' + encodeURIComponent('BUFFER_OVERFLOW_ATTEMPT'), undefined, 4000);
         p3Status = probe3.status;
       } catch (e: any) {
         p3Status = 403;
@@ -802,8 +869,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const start = performance.now();
       const assertions: SubAssertion[] = [];
 
-      const res = await fetch('/api/kernel/gap-matrix');
-      const data = await res.json();
+      let res: Response;
+      let data: any = {};
+      try {
+        res = await safeFetch('/api/kernel/gap-matrix', undefined, 4000);
+        data = await safeJson(res);
+      } catch (err: any) {
+        res = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        data = {};
+      }
 
       assertions.push({
         name: 'استجابة مصفوفة النواة (Gap Matrix API Status)',
@@ -856,8 +930,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const start = performance.now();
       const assertions: SubAssertion[] = [];
 
-      const res = await fetch('/api/workspace/tree');
-      const data = await res.json();
+      let res: Response;
+      let data: any = {};
+      try {
+        res = await safeFetch('/api/workspace/tree', undefined, 4000);
+        data = await safeJson(res);
+      } catch (err: any) {
+        res = new Response(JSON.stringify({ error: err.message }), { status: 500 });
+        data = {};
+      }
 
       assertions.push({
         name: 'استجابة فهرس مساحة العمل (Workspace Tree Endpoint Status)',
@@ -949,9 +1030,9 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       // Check Manifest
       let manifestOk = false;
       try {
-        const manResp = await fetch('/manifest.json');
+        const manResp = await safeFetch('/manifest.json', undefined, 3000);
         if (manResp.ok) {
-          const manJson = await manResp.json();
+          const manJson = await safeJson(manResp);
           manifestOk = manJson.display === 'standalone' && Array.isArray(manJson.icons) && manJson.icons.length >= 2;
         }
       } catch (e) {
@@ -969,8 +1050,8 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       // Check Service Worker file
       let swOk = false;
       try {
-        const swResp = await fetch('/sw.js');
-        swOk = swResp.ok && swResp.headers.get('content-type')?.includes('javascript') || false;
+        const swResp = await safeFetch('/sw.js', undefined, 3000);
+        swOk = swResp.ok && (swResp.headers.get('content-type')?.includes('javascript') || false);
       } catch (e) {
         swOk = false;
       }
@@ -986,7 +1067,7 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       // Check Offline fallback page
       let offlineOk = false;
       try {
-        const offResp = await fetch('/offline.html');
+        const offResp = await safeFetch('/offline.html', undefined, 3000);
         offlineOk = offResp.ok;
       } catch (e) {
         offlineOk = false;
@@ -1032,21 +1113,43 @@ export async function executeSingleAutomatedTest(testId: string): Promise<TestRe
   if (!test) {
     throw new Error(`الاختبار ذو المعرف [${testId}] غير موجود في المنظومة`);
   }
-  const exec = await test.run();
-  return {
-    id: test.id,
-    name: test.name,
-    department: test.department,
-    depthTier: test.depthTier,
-    description: test.description,
-    passed: exec.passed,
-    message: exec.message,
-    durationMs: exec.durationMs,
-    assertions: exec.assertions || [],
-    details: exec.details,
-    stackTrace: exec.stackTrace,
-    timestamp: new Date().toISOString()
-  };
+  try {
+    const exec = await test.run();
+    return {
+      id: test.id,
+      name: test.name,
+      department: test.department,
+      depthTier: test.depthTier,
+      description: test.description,
+      passed: exec.passed,
+      message: exec.message,
+      durationMs: exec.durationMs,
+      assertions: exec.assertions || [],
+      details: exec.details,
+      stackTrace: exec.stackTrace,
+      timestamp: new Date().toISOString()
+    };
+  } catch (err: any) {
+    return {
+      id: test.id,
+      name: test.name,
+      department: test.department,
+      depthTier: test.depthTier,
+      description: test.description,
+      passed: false,
+      message: `استثناء تنفيذي: ${err.message}`,
+      durationMs: 0,
+      assertions: [{
+        name: 'Execution Exception Catch',
+        condition: false,
+        expected: 'No uncaught exception',
+        actual: err.message,
+        passed: false
+      }],
+      stackTrace: err.stack,
+      timestamp: new Date().toISOString()
+    };
+  }
 }
 
 // Execute Full Automated Test Suite with deep assertion reporting

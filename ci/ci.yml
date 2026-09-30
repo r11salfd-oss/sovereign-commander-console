@@ -1,0 +1,39 @@
+name: Sovereign Commander Console CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  quality-gate:
+    name: Sovereign Quality Gate & Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Verify TypeScript Integrity
+        run: npx tsc --noEmit
+
+      - name: Verify Sovereign SQL & Cryptographic Audit Chain
+        run: npm run verify:sql
+
+      - name: Verify Production Build
+        run: npm run build

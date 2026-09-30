@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Brain, Hammer, Shield, Zap, Sparkles, Bot, Terminal, Send, CheckCircle2, Cpu, Sliders, ChevronDown } from 'lucide-react';
+import { useState } from 'react';
+import { Terminal, Send, CheckCircle2, Cpu, Sliders } from 'lucide-react';
 import { getGoogleAuthHeaders } from '../firebase';
 import { useSystemTelemetry } from '../hooks/useSystemTelemetry';
 

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useOptimistic, useTransition } from 'react';
 import { 
-  Clock, ShieldAlert, Check, X, Play, Copy, RefreshCw, AlertTriangle, 
-  Terminal, ShieldCheck, HelpCircle, ChevronRight, ChevronDown 
+  Clock, Check, X, Play, Copy, RefreshCw, AlertTriangle, 
+  Terminal, ShieldCheck, ChevronRight, ChevronDown 
 } from 'lucide-react';
 import { Approval } from '../types';
 
@@ -24,6 +24,36 @@ export default function ApprovalQueue({
 }: ApprovalQueueProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
+  const [, startTransition] = useTransition();
+
+  // React 19 Optimistic UI: Immediately reflects status transition
+  const [optimisticApprovals, setOptimisticApprovals] = useOptimistic(
+    approvals,
+    (state: Approval[], update: { id: string; status: Approval['status'] }) => {
+      return state.map(item => item.id === update.id ? { ...item, status: update.status } : item);
+    }
+  );
+
+  const handleOptimisticApprove = (id: string) => {
+    startTransition(async () => {
+      setOptimisticApprovals({ id, status: 'approved' });
+      await onApproveLocal(id);
+    });
+  };
+
+  const handleOptimisticReject = (id: string) => {
+    startTransition(async () => {
+      setOptimisticApprovals({ id, status: 'rejected' });
+      await onRejectLocal(id);
+    });
+  };
+
+  const handleOptimisticExecute = (id: string) => {
+    startTransition(async () => {
+      setOptimisticApprovals({ id, status: 'executed' });
+      await onExecute(id);
+    });
+  };
 
   const handleCopy = (text: string, id: string, type: 'approve' | 'execute' | 'verify') => {
     navigator.clipboard.writeText(text);
@@ -142,7 +172,7 @@ export default function ApprovalQueue({
         </div>
       ) : (
         <div className="flex flex-col gap-5">
-          {approvals.map((appr) => {
+          {optimisticApprovals.map((appr) => {
             const styles = getStatusStyle(appr.status);
             const riskClass = getRiskStyle(appr.risk);
 
@@ -190,14 +220,24 @@ export default function ApprovalQueue({
                         </span>
                       </div>
                       
-                      {/* Interactive Buttons for Sandbox Quick Testing */}
+                      {/* React 19 Optimistic Interactive Action Controls */}
                       {isPending && (
-                        <div className="flex gap-1">
+                        <div className="flex items-center gap-1.5">
                           <button
-                            onClick={() => onRejectLocal(appr.id)}
-                            className="bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-[10px] font-mono font-medium px-2 py-1 rounded transition-colors flex items-center gap-1"
+                            onClick={() => handleOptimisticApprove(appr.id)}
+                            className="bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-600/70 text-emerald-300 text-[10px] font-mono font-bold px-2.5 py-1 rounded transition-all duration-200 flex items-center gap-1 shadow-sm shadow-emerald-950 hover:scale-105 active:scale-95"
+                            title="Approve and authorize cryptographic execution"
                           >
-                            <X className="h-3 w-3" /> Reject
+                            <Check className="h-3 w-3 text-emerald-400" />
+                            <span>Approve / موافقة</span>
+                          </button>
+                          <button
+                            onClick={() => handleOptimisticReject(appr.id)}
+                            className="bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-400 text-[10px] font-mono font-medium px-2 py-1 rounded transition-all duration-200 flex items-center gap-1 hover:scale-105 active:scale-95"
+                            title="Reject proposed operation"
+                          >
+                            <X className="h-3 w-3 text-rose-400" />
+                            <span>Reject / رفض</span>
                           </button>
                         </div>
                       )}
@@ -205,10 +245,10 @@ export default function ApprovalQueue({
                       {(isPending || isApproved) && (
                         <button
                           disabled={!isApproved || executingId === appr.id}
-                          onClick={() => onExecute(appr.id)}
-                          className={`border text-[10px] font-mono font-bold px-2.5 py-1 rounded transition-colors flex items-center gap-1
+                          onClick={() => handleOptimisticExecute(appr.id)}
+                          className={`border text-[10px] font-mono font-bold px-2.5 py-1 rounded transition-all duration-200 flex items-center gap-1
                             ${isApproved 
-                              ? 'bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/40 hover:border-emerald-400 text-emerald-300 animate-pulse' 
+                              ? 'bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/40 hover:border-emerald-400 text-emerald-300 animate-pulse hover:scale-105 active:scale-95' 
                               : 'bg-slate-900/60 border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
                             }`
                           }
@@ -220,7 +260,7 @@ export default function ApprovalQueue({
                             <Play className="h-3 w-3" />
                           )}
                           <span>
-                            {executingId === appr.id ? 'Running...' : 'Execute Operation / تشغيل'}
+                            {executingId === appr.id ? 'Running...' : 'Execute / تشغيل'}
                           </span>
                         </button>
                       )}
