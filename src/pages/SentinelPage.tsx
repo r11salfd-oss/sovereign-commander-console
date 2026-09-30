@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, ShieldAlert, ShieldCheck, Lock, AlertTriangle, Eye, Flame, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Shield, ShieldCheck, Lock, AlertTriangle, Eye, Flame } from 'lucide-react';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { auth } from '../firebase';
 

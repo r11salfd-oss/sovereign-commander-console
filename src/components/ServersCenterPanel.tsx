@@ -21,12 +21,10 @@ import {
   Sparkles,
   ExternalLink,
   ChevronRight,
-  Database,
-  Globe,
   FileCode,
   Box
 } from 'lucide-react';
-import { McpServerInfo, LspServerInfo, ServersCenterOverview } from '../services/serversCenterRegistry';
+import { ServersCenterOverview } from '../services/serversCenterRegistry';
 
 export default function ServersCenterPanel() {
   const [overview, setOverview] = useState<ServersCenterOverview | null>(null);

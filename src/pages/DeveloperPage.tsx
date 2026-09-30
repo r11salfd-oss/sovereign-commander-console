@@ -3,26 +3,17 @@ import {
   Terminal, 
   Play, 
   RefreshCw, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Shield, 
-  Cpu, 
-  Activity, 
   Send, 
   Key, 
   Copy, 
   Check, 
-  Download, 
-  ExternalLink, 
   Trash2, 
   Plus, 
   Code2, 
   BookOpen, 
-  Layers, 
   Laptop,
   Folder,
   Clock,
-  CheckCircle,
   Server
 } from 'lucide-react';
 import { getGoogleAuthHeaders } from '../firebase';
@@ -603,7 +594,7 @@ export default function DeveloperPage() {
                   <Key className="w-4 h-4 text-cyan-400" />
                   <span>مفاتيح ورموز وصول الـ CLI (API Tokens)</span>
                 </div>
-                <span className="text-xs text-slate-500">إجمالي الرموز: {tokens.length}</span>
+                <span className="text-xs text-slate-500">إجمالي الرموز: {loadingTokens ? 'جاري التحميل...' : tokens.length}</span>
               </div>
 
               {/* Generate New Token Form */}

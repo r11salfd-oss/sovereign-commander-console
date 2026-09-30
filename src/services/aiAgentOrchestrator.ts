@@ -435,10 +435,10 @@ export class AutonomousAgentRuntime {
     const steps: AgentStepTrace[] = [];
     const taskCheckpoints: AgentCheckpoint[] = [];
 
-    // Phase 1: Planning / Decomposition
+    // Phase 1: Planning / Decomposition for target goal
     const planSteps = [
-      { tool: 'query_kernel_telemetry', params: { subsystem: 'cpu' } },
-      { tool: 'inspect_database_schema', params: { tableName: 'sovereign_approvals' } }
+      { tool: 'query_kernel_telemetry', params: { subsystem: 'cpu', targetGoal: goal } },
+      { tool: 'inspect_database_schema', params: { tableName: 'sovereign_approvals', targetGoal: goal } }
     ];
 
     let status: AgentTaskStatus = 'executing';

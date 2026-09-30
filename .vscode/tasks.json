@@ -27,6 +27,28 @@
       }
     },
     {
+      "label": "Sovereign: CI/CD Quality Gate (Local Pipeline)",
+      "type": "npm",
+      "script": "test:all",
+      "group": "test",
+      "problemMatcher": ["$tsc"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Sovereign: Master Test Matrix (10 Suites)",
+      "type": "npm",
+      "script": "test",
+      "group": "test",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
       "label": "Sovereign: Verify SQL Architecture",
       "type": "npm",
       "script": "verify:sql",

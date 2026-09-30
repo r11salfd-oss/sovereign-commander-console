@@ -4,7 +4,7 @@ import { db, auth, sanitizeForFirestore } from '../firebase';
 import ApprovalQueue from '../components/ApprovalQueue';
 import ProposeAction from '../components/ProposeAction';
 import { Approval } from '../types';
-import { CheckSquare, Plus, RefreshCw, Filter, ShieldCheck, AlertCircle } from 'lucide-react';
+import { CheckSquare, Plus } from 'lucide-react';
 
 export default function ApprovalsPage() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -246,14 +246,20 @@ export default function ApprovalsPage() {
 
         {/* The Real Approvals Queue */}
         <div className="glass-panel rounded-xl border border-slate-800 bg-[#0b101b]/80 p-5">
-          <ApprovalQueue
-            approvals={filteredApprovals}
-            onExecute={handleExecute}
-            onApproveLocal={handleApprove}
-            onRejectLocal={handleReject}
-            onRefresh={() => {}}
-            executingId={executingId}
-          />
+          {loading ? (
+            <div className="py-8 text-center text-xs font-mono text-slate-500">
+              جاري فحص وتحديث قائمة الموافقات السيادية...
+            </div>
+          ) : (
+            <ApprovalQueue
+              approvals={filteredApprovals}
+              onExecute={handleExecute}
+              onApproveLocal={handleApprove}
+              onRejectLocal={handleReject}
+              onRefresh={() => {}}
+              executingId={executingId}
+            />
+          )}
         </div>
       </div>
     </div>

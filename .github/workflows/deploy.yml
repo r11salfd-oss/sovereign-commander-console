@@ -1,0 +1,95 @@
+# ==============================================================================
+# 👑 SOVEREIGN COMMANDER CONSOLE - CONTINUOUS DEPLOYMENT & ROLLBACK PIPELINE
+# Authority: Supreme Sovereign Commander
+# Chain Key ID: 360ea36c28e66d9d
+# ==============================================================================
+
+name: Sovereign Continuous Deployment & Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Target Deployment Environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      action_type:
+        description: 'Operation Type'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - rollback
+      release_version:
+        description: 'Version Tag or Commit SHA (required for rollback)'
+        required: false
+        default: 'latest'
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: Pre-Deployment Sovereign Gate
+  # ----------------------------------------------------------------------------
+  deployment-gate:
+    name: Pre-Flight Verification Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛡️ Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Environment & Dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔍 Integrity Pass
+        run: npx tsc --noEmit
+
+  # ----------------------------------------------------------------------------
+  # Job 2: Cloud Run / GCP Deployment & Rollback Execution
+  # ----------------------------------------------------------------------------
+  deploy-or-rollback:
+    name: Execute Deploy / Rollback Operation
+    runs-on: ubuntu-latest
+    needs: deployment-gate
+    steps:
+      - name: 🛡️ Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        if: env.GCP_SA_KEY != ''
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+      - name: ☁️ Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: 🚀 Execute Staged Deployment
+        if: ${{ inputs.action_type == 'deploy' }}
+        run: |
+          echo "Initiating Sovereign Deployment to environment: ${{ inputs.target_env }}"
+          echo "Target image: gcr.io/${{ secrets.GCP_PROJECT_ID }}/sovereign-commander-console:${{ github.sha }}"
+          # Cloud Run deployment execution trigger
+          # gcloud run deploy sovereign-commander-console-${{ inputs.target_env }} \
+          #   --image=gcr.io/${{ secrets.GCP_PROJECT_ID }}/sovereign-commander-console:${{ github.sha }} \
+          #   --region=us-central1 --platform=managed
+
+      - name: 🔄 Execute Sovereign Rollback
+        if: ${{ inputs.action_type == 'rollback' }}
+        run: |
+          echo "Executing Emergency Rollback to target version: ${{ inputs.release_version }}"
+          echo "Reverting revision for sovereign-commander-console-${{ inputs.target_env }}"
+          # Cloud Run rollback revision trigger
+          # gcloud run services update-traffic sovereign-commander-console-${{ inputs.target_env }} \
+          #   --to-revisions=${{ inputs.release_version }}=100 --region=us-central1

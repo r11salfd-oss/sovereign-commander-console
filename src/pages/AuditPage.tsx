@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, RefreshCw, Layers, CheckCircle2, Download, Terminal, Search, Lock, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, RefreshCw, Layers, CheckCircle2, Download, Search, AlertTriangle } from 'lucide-react';
 import { AuditStatus } from '../types';
 import { useWorkspace } from '../hooks/useWorkspace';
 

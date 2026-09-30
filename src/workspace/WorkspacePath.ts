@@ -1,5 +1,4 @@
 import path from 'path';
-import fs from 'fs';
 import { getDynamicWorkspaceRoot } from './WorkspaceConfig';
 
 export function getBaseRoot(): string {

@@ -20,6 +20,9 @@
     // Cloud, Docker & Version Control
     "ms-azuretools.vscode-docker",
     "eamodio.gitlens",
-    "github.vscode-github-actions"
+    "github.vscode-github-actions",
+
+    // Firebase & Firestore Security Rules DSL
+    "chris-flick.firestore-rules"
   ]
 }

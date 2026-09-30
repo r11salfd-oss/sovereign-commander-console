@@ -15,7 +15,6 @@ import {
   CheckCheck,
   ChevronLeft,
   ChevronRight,
-  Activity,
   Sparkles,
   AlertTriangle,
   Search
@@ -224,7 +223,7 @@ export default function TopNavigationBar() {
             <div className="flex flex-col">
               <div className="text-xs font-bold font-sans text-white tracking-wide flex items-center gap-1.5">
                 <span>Sovereign Commander</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">v3.8</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">v3.8</span>
               </div>
               <span className="text-[10px] text-cyan-400/80 font-mono hidden sm:inline">مركز التحكم والقيادة السيادي</span>
             </div>

@@ -31,7 +31,8 @@
   // --- File Associations & Nesting ---
   "files.associations": {
     "*.sql": "sql",
-    "*.rules": "javascript",
+    "*.rules": "firestore-rules",
+    "firestore.rules": "firestore-rules",
     "*.gql": "graphql"
   },
   "explorer.fileNesting.enabled": true,

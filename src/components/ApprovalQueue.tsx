@@ -1,7 +1,7 @@
 import React, { useState, useOptimistic, useTransition } from 'react';
 import { 
-  Clock, ShieldAlert, Check, X, Play, Copy, RefreshCw, AlertTriangle, 
-  Terminal, ShieldCheck, HelpCircle, ChevronRight, ChevronDown 
+  Clock, Check, X, Play, Copy, RefreshCw, AlertTriangle, 
+  Terminal, ShieldCheck, ChevronRight, ChevronDown 
 } from 'lucide-react';
 import { Approval } from '../types';
 

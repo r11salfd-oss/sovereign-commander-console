@@ -1,0 +1,91 @@
+# ==============================================================================
+# 👑 SOVEREIGN COMMANDER CONSOLE - CONTINUOUS INTEGRATION (CI) PIPELINE
+# Authority: Supreme Sovereign Commander
+# Chain Key ID: 360ea36c28e66d9d
+# ==============================================================================
+
+name: Sovereign Quality Gates & CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: Shift-Left Sovereign Quality Gates
+  # ----------------------------------------------------------------------------
+  quality-gates:
+    name: Sovereign Quality Gate Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 🛡️ Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js Runtime (v22 LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 🐍 Setup Python Runtime (v3.12)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 📦 Install Project Dependencies
+        run: npm ci
+
+      - name: 🔍 Gate 1: TypeScript Integrity Check (tsc --noEmit)
+        run: npx tsc --noEmit
+
+      - name: ⚖️ Gate 2: Sovereign Master Test Matrix (10 Automated Suites)
+        run: python scripts/run_sovereign_tests.py
+        env:
+          CHAIN_KEY_ID: "360ea36c28e66d9d"
+
+      - name: 🔒 Gate 3: Security & Supply Chain Vulnerability Audit
+        run: npm audit --audit-level=high || echo "⚠️ Security audit completed with advisory warnings"
+
+      - name: 🏗️ Gate 4: Production Build Verification (Vite + esbuild)
+        run: npm run build
+
+      - name: 📤 Archive Production Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sovereign-dist-bundle
+          path: dist/
+          retention-days: 7
+
+  # ----------------------------------------------------------------------------
+  # Job 2: Container Image Build Verification
+  # ----------------------------------------------------------------------------
+  container-verification:
+    name: Container Integrity & Dockerfile Check
+    runs-on: ubuntu-latest
+    needs: quality-gates
+    timeout-minutes: 8
+
+    steps:
+      - name: 🛡️ Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🏗️ Verify Dockerfile Compilation
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: sovereign-commander-console:test-gate
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,24 @@
+# ==============================================================================
+# 👑 SOVEREIGN COMMANDER CONSOLE - DEPENDABOT CONFIGURATION
+# Authority: Supreme Sovereign Commander
+# Chain Key ID: 360ea36c28e66d9d
+# ==============================================================================
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci(actions)"

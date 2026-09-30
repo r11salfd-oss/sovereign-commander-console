@@ -10,6 +10,9 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "check": "tsc --noEmit",
+    "test": "python scripts/run_sovereign_tests.py",
+    "test:all": "npm run check && npm run test && npm run build",
+    "security:audit": "npm audit --audit-level=high",
     "verify:sql": "python scripts/sql_architecture_verifier.py",
     "verify:governance": "python scripts/sovereign_governance_engine.py"
   },

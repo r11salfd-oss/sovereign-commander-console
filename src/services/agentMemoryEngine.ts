@@ -400,7 +400,7 @@ export class SovereignAgentMemoryEngine {
     const userMessages = messages.filter(m => m.sender === 'user').map(m => m.text);
     const agentMessages = messages.filter(m => m.sender === 'agent').map(m => m.text);
 
-    const summary = `Session [${title}] conducted by agent [${agentId}]. Addressed ${userMessages.length} commander inquiries.`;
+    const summary = `Session [${title}] conducted by agent [${agentId}]. Addressed ${userMessages.length} commander inquiries with ${agentMessages.length} sovereign responses.`;
     const keyInsights: string[] = [];
 
     // Extract potential semantic facts
