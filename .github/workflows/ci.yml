@@ -8,9 +8,9 @@ name: Sovereign Quality Gates & CI Pipeline
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ sovereign-main, main, master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ sovereign-main, main, master ]
   workflow_dispatch:
 
 concurrency:
