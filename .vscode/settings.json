@@ -157,10 +157,10 @@
   },
 
   // --- Telemetry & Notification Hygiene ---
-  "redhat.telemetry.enabled": false,
   "telemetry.telemetryLevel": "off",
 
   // --- Tailwind CSS & UI Tooling ---
+  "css.lint.unknownAtRules": "ignore",
   "tailwindCSS.includeLanguages": {
     "typescript": "javascript",
     "typescriptreact": "javascript"

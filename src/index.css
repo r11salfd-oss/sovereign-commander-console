@@ -32,8 +32,8 @@
 .glass-panel {
   background: var(--color-citadel-panel);
   border: 1px solid var(--color-citadel-border);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.75);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
