@@ -193,7 +193,7 @@ export default function TopNavigationBar() {
 
   return (
     <>
-      <header className={`sticky top-0 z-50 w-full select-none shadow-[0_6px_25px_rgba(0,0,0,0.65)] bg-[#070b13] border-b transition-all duration-300 relative ${isAlertTriggered
+      <header className={`sticky top-0 z-50 w-full select-none shadow-[0_6px_25px_rgba(0,0,0,0.65)] bg-[#070b13] border-b transition-all duration-300 ${isAlertTriggered
           ? isCritical
             ? 'border-b-2 border-b-rose-500 shadow-[0_4px_30px_rgba(244,63,94,0.45)] ring-1 ring-rose-500/50'
             : 'border-b-2 border-b-amber-500 shadow-[0_4px_22px_rgba(245,158,11,0.35)] ring-1 ring-amber-500/40'
@@ -205,8 +205,8 @@ export default function TopNavigationBar() {
           <div 
             className={`absolute top-0 left-0 right-0 h-1 z-50 pointer-events-none animate-pulse ${
               isCritical 
-                ? 'bg-gradient-to-r from-rose-600 via-amber-400 to-rose-600 shadow-[0_0_15px_#f43f5e]' 
-                : 'bg-gradient-to-r from-amber-500 via-yellow-300 to-amber-500 shadow-[0_0_12px_#f59e0b]'
+                ? 'bg-linear-to-r from-rose-600 via-amber-400 to-rose-600 shadow-[0_0_15px_#f43f5e]' 
+                : 'bg-linear-to-r from-amber-500 via-yellow-300 to-amber-500 shadow-[0_0_12px_#f59e0b]'
             }`} 
           />
         )}
@@ -287,7 +287,7 @@ export default function TopNavigationBar() {
                   className="flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-950/40 border border-cyan-500/40 text-cyan-300 text-[10px] sm:text-[11px]"
                   title={`المستخدم المسجل: ${currentUser.email || ''}`}
                 >
-                  <span className="truncate max-w-[90px] sm:max-w-[150px]">
+                  <span className="truncate max-w-22.5 sm:max-w-37.5">
                     {currentUser.email}
                   </span>
                 </div>
@@ -362,7 +362,7 @@ export default function TopNavigationBar() {
                         hasDraggedRef.current = false;
                       }
                     }}
-                    className={`flex flex-shrink-0 items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all duration-200 font-mono text-xs border ${isActive
+                    className={`flex shrink-0 items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all duration-200 font-mono text-xs border ${isActive
                         ? 'bg-cyan-950/80 text-cyan-200 border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.3)] font-bold ring-1 ring-cyan-400/50'
                         : 'bg-slate-900/60 text-slate-300 border-slate-800 hover:bg-slate-800/90 hover:text-cyan-300 hover:border-cyan-500/40'
                       }`}
