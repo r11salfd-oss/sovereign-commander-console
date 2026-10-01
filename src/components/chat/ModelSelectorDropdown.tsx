@@ -183,14 +183,14 @@ export default function ModelSelectorDropdown({
       {/* Popover Menu */}
       {isOpen && (
         <div 
-          className="absolute left-0 sm:right-auto mt-2 w-80 sm:w-96 rounded-xl bg-[#090e1c] border border-slate-700 shadow-2xl z-50 overflow-hidden backdrop-blur-md animate-in fade-in zoom-in-95 duration-150"
+          className="absolute right-0 left-auto mt-2 w-88 sm:w-[420px] max-w-[calc(100vw-1.5rem)] rounded-xl bg-[#090e1c] border border-slate-700 shadow-2xl z-50 overflow-hidden backdrop-blur-md animate-in fade-in zoom-in-95 duration-150"
           style={{ minWidth: '320px' }}
         >
           {/* Header */}
           <div className="p-3 bg-[#060a14] border-b border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-400" />
-              <span className="text-xs font-bold text-white font-mono">اختر المحرك العصبي (Gemini Matrix)</span>
+              <span className="text-xs font-bold text-white font-mono">اختر المحرك العصبي (Neural Engine Matrix)</span>
             </div>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800">
               {AVAILABLE_MODELS.length} نماذج
@@ -198,7 +198,7 @@ export default function ModelSelectorDropdown({
           </div>
 
           {/* Model Options List */}
-          <div className="p-2 space-y-1.5 max-h-96 overflow-y-auto">
+          <div className="p-2 space-y-2 max-h-[460px] overflow-y-auto">
             {AVAILABLE_MODELS.map((model) => {
               const isSelected = activeModel.id === model.id;
               const ModelIcon = model.icon;
@@ -211,7 +211,7 @@ export default function ModelSelectorDropdown({
                     onSelectModel(model.id);
                     setIsOpen(false);
                   }}
-                  className={`w-full text-right p-2.5 rounded-lg border transition-all cursor-pointer flex items-start gap-3 group ${
+                  className={`w-full text-right p-3 rounded-lg border transition-all cursor-pointer flex items-start gap-3 group ${
                     isSelected 
                       ? `${model.badgeColor} ${model.borderColor} bg-opacity-30`
                       : 'border-slate-800/80 bg-slate-900/40 hover:bg-slate-800/60 text-slate-300 hover:border-slate-700'
@@ -228,12 +228,12 @@ export default function ModelSelectorDropdown({
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1 mb-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold font-mono text-xs text-white group-hover:text-cyan-300 transition">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold font-mono text-xs text-white group-hover:text-cyan-300 transition break-words">
                           {model.name}
                         </span>
-                        <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded border ${model.badgeColor}`}>
+                        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border whitespace-nowrap ${model.badgeColor}`}>
                           {model.badge}
                         </span>
                       </div>
@@ -244,13 +244,13 @@ export default function ModelSelectorDropdown({
                       )}
                     </div>
 
-                    <p className="text-[11px] text-slate-300 font-sans leading-relaxed line-clamp-2 mb-1">
+                    <p className="text-[11px] text-slate-300 font-sans leading-relaxed break-words mb-1">
                       {model.descriptionAr}
                     </p>
 
-                    <div className="flex items-center gap-1.5 text-[9px] font-mono text-slate-500">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-mono text-slate-400">
                       <span>•</span>
-                      <span className="truncate">{model.specialty}</span>
+                      <span className="break-words">{model.specialty}</span>
                     </div>
                   </div>
                 </button>

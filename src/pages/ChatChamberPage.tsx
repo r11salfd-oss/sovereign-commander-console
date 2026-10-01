@@ -266,8 +266,29 @@ export default function ChatChamberPage() {
     }
   ];
 
+  interface SecretInvestigation {
+    id: string;
+    messageId?: string;
+    timestamp: string;
+    agentName: string;
+    claimedMessage: string;
+    verdict: 'VERIFIED' | 'UNVERIFIED';
+    explanation: string;
+    provider: string;
+  }
+
   const [claimVerifications, setClaimVerifications] = useState<Record<string, { verdict: 'VERIFIED' | 'UNVERIFIED'; explanation: string; provider: string }>>({});
   const [verifyingMessageId, setVerifyingMessageId] = useState<string | null>(null);
+  const [isAuditingLatest, setIsAuditingLatest] = useState(false);
+  const [secretFeedTab, setSecretFeedTab] = useState<'secret_feed' | 'transcripts'>('secret_feed');
+  const [secretInvestigations, setSecretInvestigations] = useState<SecretInvestigation[]>(() => {
+    try {
+      const saved = localStorage.getItem('sovereign_secret_investigations');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const handleVerifyClaim = async (messageId: string, agentName: string, claimedMessage: string) => {
     setVerifyingMessageId(messageId);
@@ -290,12 +311,50 @@ export default function ChatChamberPage() {
             provider: data.provider || 'OpenCode Zen (muse1.3)'
           }
         }));
+
+        const newAudit: SecretInvestigation = {
+          id: 'sec_' + Date.now().toString(),
+          messageId,
+          timestamp: new Date().toISOString(),
+          agentName,
+          claimedMessage,
+          verdict: data.verdict,
+          explanation: data.explanation,
+          provider: data.provider || 'OpenCode Zen (muse1.3)'
+        };
+
+        setSecretInvestigations(prev => {
+          const updated = [newAudit, ...prev.filter(p => p.claimedMessage !== claimedMessage)].slice(0, 30);
+          try {
+            localStorage.setItem('sovereign_secret_investigations', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
       }
     } catch (err: any) {
       console.error('Error verifying claim:', err);
     } finally {
       setVerifyingMessageId(null);
     }
+  };
+
+  const handleLaunchLatestAudit = async () => {
+    const agentMsgs = messages.filter(m => m.sender === 'agent' && m.text.trim());
+    if (agentMsgs.length === 0) return;
+    const latest = agentMsgs[agentMsgs.length - 1];
+    setIsAuditingLatest(true);
+    try {
+      await handleVerifyClaim(latest.id, latest.agent || 'Agent', latest.text);
+    } finally {
+      setIsAuditingLatest(false);
+    }
+  };
+
+  const handleClearSecretInvestigations = () => {
+    setSecretInvestigations([]);
+    try {
+      localStorage.removeItem('sovereign_secret_investigations');
+    } catch {}
   };
 
   const handleSelectMode = (mode: 'solo' | 'council') => {
@@ -795,7 +854,7 @@ export default function ChatChamberPage() {
                 </span>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-2.5">
                 {agents.map(ag => {
                   const isSelected = chatMode === 'solo' 
                     ? selectedAgent === ag.id 
@@ -807,38 +866,48 @@ export default function ChatChamberPage() {
                       key={ag.id}
                       onClick={() => chatMode === 'solo' ? handleSelectAgent(ag.id) : toggleCouncilMember(ag.id)}
                       className={cn(
-                        "p-2 rounded-lg border transition cursor-pointer flex items-start gap-2.5 text-right",
+                        "p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 text-right",
                         isSelected 
                           ? (chatMode === 'solo' 
-                              ? "bg-cyan-950/40 border-cyan-500/60 shadow-[0_0_10px_rgba(6,182,212,0.15)] text-white" 
-                              : "bg-purple-950/40 border-purple-500/60 shadow-[0_0_10px_rgba(168,85,247,0.15)] text-white")
-                          : "bg-slate-900/30 border-slate-800 hover:bg-slate-800/40 text-slate-300"
+                              ? "bg-cyan-950/40 border-cyan-500/70 shadow-[0_0_12px_rgba(6,182,212,0.2)] text-white" 
+                              : "bg-purple-950/40 border-purple-500/70 shadow-[0_0_12px_rgba(168,85,247,0.2)] text-white")
+                          : "bg-slate-900/40 border-slate-800/80 hover:bg-slate-800/50 hover:border-slate-700 text-slate-300"
                       )}
                     >
-                      <div className={cn("p-1.5 rounded-md bg-slate-900 border border-slate-800 mt-0.5 shrink-0", ag.color)}>
+                      <div className={cn("p-2 rounded-lg bg-slate-900 border border-slate-800 mt-0.5 shrink-0 shadow-sm", ag.color)}>
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-xs font-bold font-mono truncate">{ag.name}</span>
-                          {ag.id === 'lead-engineer' && (
-                            <span className="px-1.5 py-0.2 rounded bg-amber-950 border border-amber-600/70 text-[8px] text-amber-300 font-mono shrink-0">
-                              كبير المهندسين
-                            </span>
-                          )}
-                          {ag.id === 'delivery-agent' && (
-                            <span className="px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-600/70 text-[8px] text-emerald-300 font-mono shrink-0">
-                              تسليم بريميوم
-                            </span>
-                          )}
-                          {ag.id === 'interface-agent' && (
-                            <span className="px-1.5 py-0.2 rounded bg-cyan-950 border border-cyan-700/60 text-[8px] text-cyan-300 font-mono shrink-0">
-                              العضو 8
-                            </span>
-                          )}
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
+                          <span className="text-xs font-bold font-mono text-white leading-tight break-words">{ag.name}</span>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {ag.id === 'lead-engineer' && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-950 border border-amber-600/70 text-[8px] text-amber-300 font-mono font-bold shrink-0">
+                                كبير المهندسين
+                              </span>
+                            )}
+                            {ag.id === 'delivery-agent' && (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-600/70 text-[8px] text-emerald-300 font-mono font-bold shrink-0">
+                                تسليم بريميوم
+                              </span>
+                            )}
+                            {ag.id === 'interface-agent' && (
+                              <span className="px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-700/60 text-[8px] text-cyan-300 font-mono font-bold shrink-0">
+                                العضو 8
+                              </span>
+                            )}
+                            {ag.id === 'truth-auditor' && (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-600/70 text-[8px] text-emerald-300 font-mono font-bold shrink-0">
+                                OpenCode Zen
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5 leading-tight">{ag.desc}</p>
-                        <div className="text-[9px] font-mono text-slate-500 mt-1">{ag.model}</div>
+                        <p className="text-[11px] text-slate-300 font-sans mt-1 leading-relaxed break-words">{ag.desc}</p>
+                        <div className="text-[9px] font-mono text-slate-400 mt-2 pt-1 border-t border-slate-800/60 flex items-center justify-between">
+                          <span className="text-cyan-400 font-semibold">{ag.model}</span>
+                          <span className="text-slate-500 uppercase">{ag.role}</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1367,22 +1436,173 @@ export default function ChatChamberPage() {
               </div>
             </div>
 
-            {/* Recent Agent Transcripts */}
-            <div className="flex-1">
-              <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 font-bold mb-2 pb-1 border-b border-slate-800">
-                سجل المداخلات الأخيرة:
+            {/* Classified Truth Sentinel Intel Feed (Red Box Area) */}
+            <div className="flex-1 flex flex-col min-h-0 border-t border-slate-800/80 pt-3 space-y-3">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-amber-400 uppercase tracking-wider">
+                  <ShieldAlert className="w-4 h-4 text-amber-400" />
+                  <span>قناة التحقيق السري السيادي</span>
+                </div>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/60 font-bold">
+                  OpenCode Zen Muse 1.3
+                </span>
               </div>
-              <div className="space-y-2 font-mono text-[10px]">
-                {messages.filter(m => m.sender === 'agent').slice(-4).reverse().map((m, idx) => (
-                  <div key={`tr-${idx}`} className="bg-slate-950 p-2 rounded-lg border border-slate-800/70 space-y-1">
-                    <div className="flex justify-between items-center text-cyan-400 font-bold">
-                      <span>[{m.agent?.split('-')[0] || 'Agent'}]</span>
-                      <span className="text-[9px] text-slate-500">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+
+              {/* Dedicated Sovereign Launch Button */}
+              <div>
+                <button
+                  onClick={handleLaunchLatestAudit}
+                  disabled={isAuditingLatest || !messages.some(m => m.sender === 'agent')}
+                  className="w-full py-2.5 px-3 rounded-lg bg-gradient-to-r from-amber-600 via-emerald-600 to-cyan-600 hover:from-amber-500 hover:to-cyan-500 text-black font-bold font-mono text-xs flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(245,158,11,0.25)] transition-all active:scale-98 cursor-pointer disabled:opacity-40"
+                  title="إطلاق محقق الصدق (Muse 1.3) لفحص مزاعم آخر وكيل في الغرفة وتوثيق الحقائق أو كشف التخيل"
+                >
+                  {isAuditingLatest ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-black" />
+                      <span>جارٍ التحقيق السري وفحص الـ CLI بالتوازي...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4 stroke-[2.5]" />
+                      <span>إطلاق التحقيق في صدق الوكيل (Muse 1.3)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Tab Selector: Secret Reports vs Live Interventions */}
+              <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px] font-mono">
+                <button
+                  onClick={() => setSecretFeedTab('secret_feed')}
+                  className={cn(
+                    "flex-1 py-1 rounded transition text-center cursor-pointer font-bold",
+                    secretFeedTab === 'secret_feed'
+                      ? "bg-amber-950/70 text-amber-300 border border-amber-700/60"
+                      : "text-slate-400 hover:text-slate-200"
+                  )}
+                >
+                  التقارير السرية ({secretInvestigations.length})
+                </button>
+                <button
+                  onClick={() => setSecretFeedTab('transcripts')}
+                  className={cn(
+                    "flex-1 py-1 rounded transition text-center cursor-pointer",
+                    secretFeedTab === 'transcripts'
+                      ? "bg-slate-800 text-cyan-300 border border-slate-700"
+                      : "text-slate-400 hover:text-slate-200"
+                  )}
+                >
+                  سجل المداخلات ({messages.filter(m => m.sender === 'agent').length})
+                </button>
+              </div>
+
+              {/* Secret Intel Reports Feed */}
+              {secretFeedTab === 'secret_feed' ? (
+                <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
+                  {secretInvestigations.length === 0 ? (
+                    <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 text-center space-y-2">
+                      <div className="flex justify-center text-amber-400">
+                        <ShieldCheck className="w-6 h-6 opacity-70" />
+                      </div>
+                      <div className="text-[11px] font-bold text-slate-300 font-mono">قناة التحقيق السري في وضع الاستعداد</div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                        اضغط على زر الإطلاق أعلاه لفحص مزاعم أي وكيل بالتوازي أو عقب انتهاء عمله، وسيتم إدراج التقرير الاستخباراتي السري هنا فوراً.
+                      </p>
                     </div>
-                    <div className="text-slate-300 line-clamp-2 text-right">{m.text}</div>
-                  </div>
-                ))}
-              </div>
+                  ) : (
+                    <div className="space-y-2 font-mono">
+                      <div className="flex justify-between items-center text-[10px] text-slate-400 px-1">
+                        <span>البرقيات الاستخباراتية المصادق عليها:</span>
+                        <button
+                          onClick={handleClearSecretInvestigations}
+                          className="text-rose-400/80 hover:text-rose-300 transition text-[9px] flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                          <span>مسح السجلات</span>
+                        </button>
+                      </div>
+
+                      {secretInvestigations.map((sec, idx) => (
+                        <div 
+                          key={sec.id || idx}
+                          className={cn(
+                            "p-2.5 rounded-lg border text-right space-y-2 transition shadow-sm",
+                            sec.verdict === 'VERIFIED'
+                              ? "bg-emerald-950/30 border-emerald-500/60"
+                              : "bg-amber-950/30 border-amber-500/60"
+                          )}
+                        >
+                          {/* Dossier Header */}
+                          <div className="flex flex-wrap items-center justify-between gap-1 pb-1.5 border-b border-slate-800/60">
+                            <span className="text-[11px] font-bold text-white flex items-center gap-1">
+                              <Terminal className="w-3 h-3 text-cyan-400" />
+                              <span>الهدف: {sec.agentName}</span>
+                            </span>
+                            <span className="text-[9px] text-slate-400">
+                              {new Date(sec.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+
+                          {/* Verdict Badge */}
+                          <div className="flex items-center gap-1.5">
+                            {sec.verdict === 'VERIFIED' ? (
+                              <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-600 font-bold text-[10px] flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>[✓ ادعاء موثق بأدلة تقنية]</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-600 font-bold text-[10px] flex items-center gap-1">
+                                <ShieldAlert className="w-3 h-3" />
+                                <span>[⚠️ ادعاء غير موثق / نص إنشائي]</span>
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Claim Quoted */}
+                          <div className="p-1.5 rounded bg-slate-950/70 border border-slate-800 text-[10px] text-slate-400 line-clamp-2 italic">
+                            "{sec.claimedMessage}"
+                          </div>
+
+                          {/* Technical Secret Explanation */}
+                          <div className="text-[10px] text-slate-200 leading-relaxed font-sans bg-black/40 p-2 rounded border border-slate-800/50 prose prose-invert prose-xs max-w-none">
+                            <ReactMarkdown>{sec.explanation}</ReactMarkdown>
+                          </div>
+
+                          {/* Footer Provider */}
+                          <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-800/40">
+                            <span className="text-amber-400 font-bold">{sec.provider}</span>
+                            <span className="text-emerald-400">فحص جنائي سيادي</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Live Transcripts with Direct Verify Trigger */
+                <div className="space-y-2 font-mono text-[10px] overflow-y-auto max-h-[420px] pr-1">
+                  {messages.filter(m => m.sender === 'agent').slice(-6).reverse().map((m, idx) => (
+                    <div key={`tr-${idx}`} className="bg-slate-950 p-2 rounded-lg border border-slate-800/70 space-y-1.5">
+                      <div className="flex justify-between items-center text-cyan-400 font-bold">
+                        <span>[{m.agent?.split('-')[0] || 'Agent'}]</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleVerifyClaim(m.id, m.agent || 'Agent', m.text)}
+                            disabled={verifyingMessageId === m.id}
+                            className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/70 hover:bg-amber-900 border border-amber-700/60 text-amber-300 transition cursor-pointer"
+                          >
+                            {verifyingMessageId === m.id ? 'جارٍ التحقيق...' : 'تدقيق الآن'}
+                          </button>
+                          <span className="text-[9px] text-slate-500">
+                            {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-slate-300 line-clamp-3 text-right">{m.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
