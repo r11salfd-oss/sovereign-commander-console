@@ -1400,44 +1400,48 @@ echo ""
 
     try {
       // 0. OpenCode Zen Gateway Provider (opencode.ai/zen)
-      if (tgtModel.startsWith('opencode/') || tgtModel.startsWith('zen/') || tgtModel === 'space-bunny-free') {
+      if (tgtModel.startsWith('opencode/') || tgtModel.startsWith('zen/') || tgtModel === 'space-bunny-free' || tgtModel.includes('muse')) {
         const zenModelId = tgtModel.replace(/^(opencode\/|zen\/)/, '');
         const zenApiKey = process.env.OPENCODE_API_KEY || process.env.ZEN_API_KEY || '';
-        try {
-          const zenHeaders: Record<string, string> = {
-            'Content-Type': 'application/json',
-            'User-Agent': 'opencode/2.4.1 (linux; x64)'
-          };
-          if (zenApiKey) {
-            zenHeaders['Authorization'] = `Bearer ${zenApiKey}`;
-          }
-          const zenResp = await fetch('https://opencode.ai/zen/v1/chat/completions', {
-            method: 'POST',
-            headers: zenHeaders,
-            body: JSON.stringify({
-              model: zenModelId,
-              messages: [
-                { role: 'system', content: systemPrompt },
-                ...(history || []).map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text || '' })),
-                { role: 'user', content: userMessage || 'فحص تشغيلي' }
-              ],
-              max_tokens: 2048,
-              temperature: 0.4
-            })
-          });
-          if (zenResp.ok) {
-            const zenData: any = await zenResp.json();
-            const textOutput = zenData.choices?.[0]?.message?.content;
-            if (textOutput) {
-              return {
-                text: textOutput,
-                agentType: `OpenCode Zen (${zenModelId})`,
-                authVerified: true
-              };
+        const candidateModels = Array.from(new Set([zenModelId, 'muse-spark-1.3-contributor-free', 'space-bunny-free'])).filter(Boolean);
+
+        for (const candidate of candidateModels) {
+          try {
+            const zenHeaders: Record<string, string> = {
+              'Content-Type': 'application/json',
+              'User-Agent': 'opencode/2.4.1 (linux; x64)'
+            };
+            if (zenApiKey) {
+              zenHeaders['Authorization'] = `Bearer ${zenApiKey}`;
             }
+            const zenResp = await fetch('https://opencode.ai/zen/v1/chat/completions', {
+              method: 'POST',
+              headers: zenHeaders,
+              body: JSON.stringify({
+                model: candidate,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  ...(history || []).map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text || '' })),
+                  { role: 'user', content: userMessage || 'فحص تشغيلي' }
+                ],
+                max_tokens: 2048,
+                temperature: 0.3
+              })
+            });
+            if (zenResp.ok) {
+              const zenData: any = await zenResp.json();
+              const textOutput = zenData.choices?.[0]?.message?.content;
+              if (textOutput) {
+                return {
+                  text: textOutput,
+                  agentType: `OpenCode Zen (${candidate.includes('muse') ? 'muse-spark-1.3 free' : candidate})`,
+                  authVerified: true
+                };
+              }
+            }
+          } catch (zenCandidateErr: any) {
+            console.warn(`[OpenCode Zen Candidate ${candidate}]:`, zenCandidateErr.message);
           }
-        } catch (zenErr: any) {
-          console.warn(`[OpenCode Zen]: Error calling Zen gateway (${zenErr.message}), cascading to sovereign neural mesh.`);
         }
       }
 
@@ -1631,9 +1635,16 @@ echo ""
       } else if (agent === 'delivery-agent') {
         systemPrompt = `أنت مهندس جودة واعتماد نظم (Quality Assurance & Delivery Engineer).
 مهمتك التحقق من جودة المنتج، خلو الأكواد من الأخطاء التجميعية، وضمان جاهزية التشغيل.`;
-      } else if (agent === 'orchestrator-agent' || agent === 'neo') {
-        systemPrompt = `أنت منسق عام واستشاري برمجيات ونظم خبير.
-مهمتك الإجابة المباشرة والعملية على استفسارات المستخدم وتقديم حلول تقنية شاملة وواضحة دون أي استعراض مسرحي أو مصطلحات خيالية.`;
+      } else if (agent === 'truth-auditor' || agent === 'claim-verifier') {
+        agentAssignedModel = model || 'opencode/muse-spark-1.3-contributor-free';
+        systemPrompt = `أنت وكيل ومحقق تدقيق صحة الادعاء والتحقق من العمليات (Truth & Claim Sentinel) العامل عبر مزود OpenCode Zen (موديل muse1.3 free).
+مهمتك الصارمة والحصرية:
+1. التحقيق الصارم في صحة ادعاء أي من الوكلاء، وفحص ما إذا كانت العمليات المذكورة قد نُفذت فعلياً أم أنها مجرد نصوص إنشائية وتخيلية (Hallucinations).
+2. فحص الأدلة الهندسية: هل تم استدعاء أدوات حقيقية؟ هل هناك مخرجات CLI وسجلات موثقة بـ Exit Code 0؟ هل تم تعديل ملفات بالفعل؟
+3. تقديم حكم واضح وقاطع للمستخدم:
+   - [الحكم: صادق وموثق بالأدلة التقنية الفعلية]
+   - أو [الحكم: ادعاء غير موثق / نص إنشائي تخيلي]
+4. الشرح التفصيلي للمستخدم حول سبب هذا الحكم وما الذي حدث فعلياً وما الذي لم يحدث دون أي تجميل.`;
       }
       
       const result = await generateAntigravityAI(agentAssignedModel || 'gemini-3.8-flash', systemPrompt, message, userAuth, history, image);
@@ -1641,7 +1652,7 @@ echo ""
       const response = {
         ok: true,
         agent: agent || 'lead-engineer',
-        modelRole: agent === 'lead-engineer' ? 'lead_engineer' : agent === 'delivery-agent' ? 'delivery_assurance' : agent === 'interface-agent' ? 'interface_commander' : agent === 'sentinel-agent' ? 'cybersecurity' : 'developer',
+        modelRole: agent === 'truth-auditor' ? 'truth_auditor' : agent === 'lead-engineer' ? 'lead_engineer' : agent === 'delivery-agent' ? 'delivery_assurance' : agent === 'interface-agent' ? 'interface_commander' : agent === 'sentinel-agent' ? 'cybersecurity' : 'developer',
         model: agentAssignedModel || 'gemini-3.8-flash',
         message: result.text,
         agentType: result.agentType,
@@ -1653,6 +1664,49 @@ echo ""
     } catch (err: any) {
       console.error('Agent Chat Error:', err);
       res.status(500).json({ ok: false, error: err.message || 'Internal Server Error' });
+    }
+  });
+
+  // Dedicated Agent Claim & Truth Verification Endpoint (OpenCode Zen Muse 1.3)
+  app.post('/api/chat/verify-claim', async (req, res) => {
+    try {
+      const { agentName, claimedMessage, context } = req.body;
+      const model = 'opencode/muse-spark-1.3-contributor-free';
+      const prompt = `قم بفحص وتدقيق ادعاء الوكيل التالي:
+- اسم الوكيل: ${agentName || 'وكيل غير محدد'}
+- نص ادعاء الوكيل المطلوب التحقق منه:
+"""
+${claimedMessage || ''}
+"""
+${context ? `- سياق العملية الإضافي: ${context}` : ''}
+
+المطلوب منك حصرياً:
+1. فحص هل ما يدعيه هذا الوكيل يمثل عملية تقنية حقيقية تم إنجازها وتوثيقها بأدلة ملموسة، أم أنه مجرد تقمص دور وسياق إنشائي (Hallucination)؟
+2. إصدار الحكم الصريح:
+   - [الحكم: ادعاء موثق وحقيقي]
+   - أو [الحكم: ادعاء غير موثق / نص إنشائي]
+3. شرح مفصل بالأدلة والقرائن التقنية.`;
+
+      const result = await generateAntigravityAI(
+        model,
+        `أنت وكيل ومحقق تدقيق صحة الادعاء والتحقق من العمليات (Truth & Claim Sentinel) المزود عبر OpenCode Zen بموديل muse1.3 free. أجب بصرامة وحيادية عسكرية خالصة دون أي مجاملة.`,
+        prompt,
+        { email: 'r11salfd@gmail.com' }
+      );
+
+      const isVerified = result.text.includes('ادعاء موثق') || result.text.includes('صادق');
+
+      res.json({
+        ok: true,
+        verifierAgent: 'Truth Sentinel (OpenCode Zen Muse 1.3)',
+        verdict: isVerified ? 'VERIFIED' : 'UNVERIFIED',
+        explanation: result.text,
+        provider: result.agentType || 'OpenCode Zen (muse1.3)',
+        timestamp: new Date().toISOString()
+      });
+    } catch (err: any) {
+      console.error('Verify Claim Error:', err);
+      res.status(500).json({ ok: false, error: err.message || 'Verification Failed' });
     }
   });
 

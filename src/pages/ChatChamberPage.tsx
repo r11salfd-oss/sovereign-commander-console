@@ -26,7 +26,8 @@ import {
   X,
   Maximize2,
   ShieldAlert,
-  ArrowDown
+  ArrowDown,
+  RefreshCw
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -253,8 +254,49 @@ export default function ChatChamberPage() {
       icon: Bot, 
       color: 'text-blue-400', 
       desc: 'الاستجابة التكتيكية السريعة والفورية للمهام التنفيذية الطارئة' 
+    },
+    { 
+      id: 'truth-auditor', 
+      name: 'Truth & Claim Sentinel', 
+      role: 'truth', 
+      model: 'opencode/muse-spark-1.3-contributor-free', 
+      icon: ShieldCheck, 
+      color: 'text-amber-400', 
+      desc: 'محقق صدق العمليات والادعاءات (OpenCode Zen Muse 1.3): فحص مزاعم الوكلاء وكشف النصوص التخيلية' 
     }
   ];
+
+  const [claimVerifications, setClaimVerifications] = useState<Record<string, { verdict: 'VERIFIED' | 'UNVERIFIED'; explanation: string; provider: string }>>({});
+  const [verifyingMessageId, setVerifyingMessageId] = useState<string | null>(null);
+
+  const handleVerifyClaim = async (messageId: string, agentName: string, claimedMessage: string) => {
+    setVerifyingMessageId(messageId);
+    try {
+      const res = await fetch('/api/chat/verify-claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentName,
+          claimedMessage
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setClaimVerifications(prev => ({
+          ...prev,
+          [messageId]: {
+            verdict: data.verdict,
+            explanation: data.explanation,
+            provider: data.provider || 'OpenCode Zen (muse1.3)'
+          }
+        }));
+      }
+    } catch (err: any) {
+      console.error('Error verifying claim:', err);
+    } finally {
+      setVerifyingMessageId(null);
+    }
+  };
 
   const handleSelectMode = (mode: 'solo' | 'council') => {
     updateSessionSettings({ chatMode: mode });
@@ -966,9 +1008,73 @@ export default function ChatChamberPage() {
                           <ReactMarkdown>{m.text}</ReactMarkdown>
                         </div>
 
-                        <div className="text-[9px] font-mono text-slate-500 mt-2 text-left">
-                          {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
+                        {/* Dedicated Claim Verification Trigger & Audit Card for Agents */}
+                        {!isUser && (
+                          <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex flex-col gap-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleVerifyClaim(m.id, agentData?.name || m.agent || 'الوكيل', m.text)}
+                                disabled={verifyingMessageId === m.id}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/50 hover:border-amber-400 text-amber-300 text-[10px] font-mono transition shadow cursor-pointer active:scale-95 disabled:opacity-50"
+                                title="تحقق من صدق ادعاء هذا الوكيل والعمليات التي يزعم تنفيذها عبر OpenCode Zen Muse 1.3"
+                              >
+                                {verifyingMessageId === m.id ? (
+                                  <>
+                                    <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
+                                    <span>جاري تدقيق صدق الوكيل (Muse 1.3 Zen)...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ShieldAlert className="w-3 h-3 text-amber-400" />
+                                    <span>🛡️ تدقيق صحة الادعاء (Muse 1.3 Zen)</span>
+                                  </>
+                                )}
+                              </button>
+                              <span className="text-[9px] font-mono text-slate-500">
+                                {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+
+                            {/* Render Truth Sentinel Verification Report if requested */}
+                            {claimVerifications[m.id] && (
+                              <div className={cn(
+                                "p-3 rounded-lg border text-xs font-mono leading-relaxed transition-all shadow-inner",
+                                claimVerifications[m.id].verdict === 'VERIFIED'
+                                  ? "bg-emerald-950/40 border-emerald-600/60 text-emerald-200"
+                                  : "bg-amber-950/50 border-amber-500/70 text-amber-100"
+                              )}>
+                                <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-white/10 font-bold text-[10px]">
+                                  <div className="flex items-center gap-1.5">
+                                    <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                                    <span>تقرير محقق صدق العمليات (Truth Sentinel)</span>
+                                  </div>
+                                  <span className={cn(
+                                    "px-1.5 py-0.5 rounded text-[9px] uppercase font-bold",
+                                    claimVerifications[m.id].verdict === 'VERIFIED'
+                                      ? "bg-emerald-900 text-emerald-300 border border-emerald-500"
+                                      : "bg-rose-950 text-rose-300 border border-rose-600"
+                                  )}>
+                                    {claimVerifications[m.id].verdict === 'VERIFIED' ? '✓ ادعاء موثق وحقيقي' : '⚠️ ادعاء غير موثق / نص إنشائي'}
+                                  </span>
+                                </div>
+                                <div className="prose prose-invert prose-xs max-w-none text-right font-sans text-slate-200">
+                                  <ReactMarkdown>{claimVerifications[m.id].explanation}</ReactMarkdown>
+                                </div>
+                                <div className="mt-2 text-[9px] text-slate-400 flex items-center justify-between border-t border-white/5 pt-1">
+                                  <span>المزود: {claimVerifications[m.id].provider}</span>
+                                  <span className="text-amber-400 font-bold">بناءً على طلب القائد المباشر</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {isUser && (
+                          <div className="text-[9px] font-mono text-slate-500 mt-2 text-left">
+                            {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

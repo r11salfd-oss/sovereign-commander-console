@@ -129,6 +129,17 @@ export default function AgentsPage() {
       systemPrompt: 'أنت وكيل التسليم البريميوم وضمان الجودة الشاملة. تتحقق من خلو الأنظمة من الأخطاء التجميعية ومطابقتها لمعايير البناء المتطورة والمكتملة دون استثناء.',
       status: 'active',
       tools: ['zero_error_auditor', 'multimodal_qa_gate', 'production_readiness_check', 'artifact_verifier']
+    },
+    {
+      id: 'truth-auditor',
+      name: 'Truth & Claim Sentinel',
+      arName: 'محقق صدق العمليات والادعاءات (OpenCode Zen Muse 1.3)',
+      role: 'Autonomous Execution Verifier & Anti-Hallucination Gate',
+      model: 'opencode/muse-spark-1.3-contributor-free',
+      description: 'Audits claims made by any agent. Detects theatrical hallucinations, verifies physical CLI/git execution, and provides grounded truth assessments.',
+      systemPrompt: 'أنت وكيل ومحقق تدقيق صحة الادعاء والتحقق من العمليات (Truth & Claim Sentinel) المزود عبر OpenCode Zen بموديل muse1.3 free. تفحص كل عملية يدعي أي وكيل أنه نفذها وتفصل بين الحقيقة والادعاء الإنشائي التخيلي.',
+      status: 'active',
+      tools: ['claim_fact_checker', 'cli_audit_verifier', 'git_diff_inspector', 'hallucination_detector', 'execution_verdict']
     }
   ]);
 
@@ -292,6 +303,7 @@ export default function AgentsPage() {
                     <option value="gemini-3.8-flash">gemini-3.8-flash (Fast Tactical & Operations)</option>
                     <option value="gemini-3.7-flash">gemini-3.7-flash (Multimodal & Advanced Vision)</option>
                     <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Deep Reasoning)</option>
+                    <option value="opencode/muse-spark-1.3-contributor-free">opencode/muse-spark-1.3-contributor-free (OpenCode Zen Muse 1.3 Free)</option>
                     <option value="opencode/space-bunny-free">opencode/space-bunny-free (OpenCode Zen Gateway)</option>
                     <option value="antigravity-preview-09-2026">antigravity-preview-09-2026 (Remote Sandbox)</option>
                     <option value="deep-research-preview-04-2026">deep-research-preview-04-2026 (Research Core)</option>

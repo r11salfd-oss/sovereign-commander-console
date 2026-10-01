@@ -85,6 +85,17 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     icon: Cpu
   },
   {
+    id: 'opencode/muse-spark-1.3-contributor-free',
+    name: 'muse-spark-1.3',
+    badge: 'OpenCode Zen Muse 1.3',
+    badgeColor: 'bg-emerald-950/80 text-emerald-300 border-emerald-500/60',
+    borderColor: 'border-emerald-500/70 shadow-[0_0_12px_rgba(16,185,129,0.25)]',
+    specialty: 'Truth Sentinel & Claims Auditor',
+    descriptionAr: 'نموذج محقق الصدق والادعاءات عبر مزود OpenCode Zen (تدقيق العمليات وكشف التخيل).',
+    descriptionEn: 'OpenCode Zen specialized model for claim verification and anti-hallucination auditing.',
+    icon: ShieldCheck
+  },
+  {
     id: 'opencode/space-bunny-free',
     name: 'space-bunny-free',
     badge: 'OpenCode Zen Gateway',
