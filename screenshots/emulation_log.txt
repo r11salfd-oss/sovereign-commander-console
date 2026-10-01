@@ -1,0 +1,19 @@
+[2026-10-01T01:33:11.529Z] 1. Navigating to Sovereign Console with Authorized Commander Token: http://localhost:3000/commander?commander=true
+[2026-10-01T01:33:14.173Z]    ⏳ Waiting for TopNavigationBar and HUD interface to mount...
+[2026-10-01T01:33:16.356Z]    📸 Captured: 01_console_dashboard.png
+[2026-10-01T01:33:16.356Z] 2. Physically clicking navigation link: Sentinel SOC (/commander/sentinel)
+[2026-10-01T01:33:18.523Z]    📸 Captured: 02_sentinel_soc.png
+[2026-10-01T01:33:18.523Z] 3. Physically clicking navigation link: Agent Corps (/commander/agents)
+[2026-10-01T01:33:20.698Z]    📸 Captured: 03_agents_corps.png
+[2026-10-01T01:33:20.698Z] 4. Physically clicking navigation link: Approvals HITL (/commander/approvals)
+[2026-10-01T01:33:22.868Z]    📸 Captured: 04_approvals_hitl.png
+[2026-10-01T01:33:22.868Z] 5. Physically clicking navigation link: Forge Code Factory (/commander/forge)
+[2026-10-01T01:33:25.010Z]    📸 Captured: 05_forge_factory.png
+[2026-10-01T01:33:25.010Z] 6. Physically clicking navigation link: Kernel OS (/commander/kernel)
+[2026-10-01T01:33:27.160Z]    📸 Captured: 06_kernel_os.png
+[2026-10-01T01:33:27.160Z] 7. Physically clicking navigation link: Chat Chamber (/commander/chat)
+[2026-10-01T01:33:29.283Z]    📸 Captured: 07_chat_chamber.png
+[2026-10-01T01:33:29.283Z] 8. Simulating Human Typing in Chat Chamber input: "فحص الجاهزية التشغيلية السيادية للمنظومة"
+[2026-10-01T01:33:31.656Z]    ⌨️ Typed command with human keystroke cadence.
+[2026-10-01T01:33:31.656Z] 9. Physically pressing ENTER key to dispatch command...
+[2026-10-01T01:33:35.322Z]    📸 Captured: 08_chat_interaction_dispatched.png
