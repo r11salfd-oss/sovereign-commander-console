@@ -11,6 +11,7 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope('email');
 googleProvider.addScope('profile');
 googleProvider.addScope('openid');
+googleProvider.addScope('https://www.googleapis.com/auth/generative-language');
 googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
@@ -62,17 +63,28 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
+export function isGoogleProLinked(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean(
+    localStorage.getItem('google_oauth_access_token') || 
+    sessionStorage.getItem('google_oauth_access_token')
+  );
+}
+
 export async function loginWithGoogle(): Promise<User> {
   try {
     const cred = await signInWithPopup(auth, googleProvider);
     const googleCredential = GoogleAuthProvider.credentialFromResult(cred);
     if (googleCredential?.accessToken) {
       sessionStorage.setItem('google_oauth_access_token', googleCredential.accessToken);
+      localStorage.setItem('google_oauth_access_token', googleCredential.accessToken);
     }
     const idToken = await cred.user.getIdToken();
     sessionStorage.setItem('google_id_token', idToken);
+    localStorage.setItem('google_id_token', idToken);
     if (cred.user.email) {
       sessionStorage.setItem('google_user_email', cred.user.email);
+      localStorage.setItem('google_user_email', cred.user.email);
     }
     return cred.user;
   } catch (error: any) {
@@ -94,8 +106,8 @@ export async function getGoogleAuthHeaders(): Promise<Record<string, string>> {
     'Content-Type': 'application/json'
   };
   
-  const storedEmail = sessionStorage.getItem('google_user_email') || 'r11salfd@gmail.com';
-  const oauthToken = sessionStorage.getItem('google_oauth_access_token');
+  const storedEmail = localStorage.getItem('google_user_email') || sessionStorage.getItem('google_user_email') || 'r11salfd@gmail.com';
+  const oauthToken = localStorage.getItem('google_oauth_access_token') || sessionStorage.getItem('google_oauth_access_token');
   
   if (auth.currentUser) {
     try {
@@ -123,7 +135,9 @@ export async function getGoogleAuthHeaders(): Promise<Record<string, string>> {
 
 export async function logoutUser(): Promise<void> {
   sessionStorage.removeItem('google_oauth_access_token');
+  localStorage.removeItem('google_oauth_access_token');
   sessionStorage.removeItem('google_id_token');
+  localStorage.removeItem('google_id_token');
   sessionStorage.removeItem('sovereign_local_commander');
   localStorage.removeItem('sovereign_local_commander');
   sessionStorage.removeItem('google_user_email');

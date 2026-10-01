@@ -19,7 +19,7 @@ import {
   AlertTriangle,
   Search
 } from 'lucide-react';
-import { auth, logoutUser, loginWithGoogle } from '../firebase';
+import { auth, logoutUser, loginWithGoogle, isGoogleProLinked } from '../firebase';
 import { User } from 'firebase/auth';
 import TelemetryDiagnosticsModal from './TelemetryDiagnosticsModal';
 import SystemMonitor, { LatencyThresholdAlert } from './SystemMonitor';
@@ -279,6 +279,32 @@ export default function TopNavigationBar() {
               <Sparkles className="w-3.5 h-3.5 text-purple-400" />
               <span className="hidden sm:inline">صوت حي</span>
             </button>
+
+            {/* Google AI Pro Subscription Status Badge / Quick Link */}
+            {isGoogleProLinked() ? (
+              <div 
+                className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                title="اشتراك Google AI Pro (5TB) مفعل ومربوط عبر حساب Google (Direct OAuth)"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Google AI Pro (5TB)</span>
+              </div>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    await loginWithGoogle();
+                  } catch (e: any) {
+                    console.error('Google AI Pro OAuth connection failed:', e);
+                  }
+                }}
+                title="اضغط لربط اشتراك حسابك Google AI Pro (5TB) واستخدامه مباشرة بدون مفاتيح"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold transition text-[10px] sm:text-xs shadow-[0_0_12px_rgba(59,130,246,0.35)] cursor-pointer active:scale-95"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-spin" />
+                <span>ربط اشتراك Google AI Pro</span>
+              </button>
+            )}
 
             {/* User Account or Login Button */}
             {currentUser ? (

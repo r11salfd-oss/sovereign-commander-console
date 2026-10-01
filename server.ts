@@ -1441,10 +1441,10 @@ echo ""
         }
       }
 
-      // 1. Direct Google Generative Language REST with OAuth Token (if active)
+      // 1. Direct Google Generative Language REST with OAuth Token (Google AI Pro Account)
       if (userAuth.oauthToken) {
         try {
-          const directModel = tgtModel.includes('pro') ? 'gemini-3.1-pro-preview' : 'gemini-3.8-flash';
+          const directModel = tgtModel.includes('pro') ? 'gemini-3.1-pro-preview' : tgtModel;
           const restParts: any[] = [];
           if (image && image.data) {
             const cleanBase64 = image.data.replace(/^data:[^;]+;base64,/, '');
@@ -1477,13 +1477,16 @@ echo ""
             if (outputCandidate) {
               return {
                 text: outputCandidate,
-                agentType: `Gemini (${accountEmail} • Google Direct Multimodal)`,
+                agentType: `Google AI Pro (${accountEmail} • Direct OAuth)`,
                 authVerified: true
               };
             }
+          } else {
+            const errText = await restResp.text();
+            console.warn(`[Google AI Pro Direct OAuth REST]: Status ${restResp.status} - ${errText}`);
           }
-        } catch {
-          // Continue to SDK execution
+        } catch (oauthEx: any) {
+          console.warn('[Google AI Pro Direct OAuth Exception]:', oauthEx);
         }
       }
 
