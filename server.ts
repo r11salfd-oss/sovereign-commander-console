@@ -1979,8 +1979,19 @@ ${context}
   });
 
   app.post('/api/kernel/syscall/invoke', (req, res) => {
-    const { syscallNumber, callerAgent, payload } = req.body;
-    const result = sovereignKernelInstance.executeSyscall(Number(syscallNumber), callerAgent, payload);
+    let { syscallNumber, syscall, callerAgent, payload } = req.body || {};
+    let num = Number(syscallNumber);
+    if (isNaN(num)) {
+      if (typeof syscall === 'number') {
+        num = syscall;
+      } else if (typeof syscall === 'string') {
+        const found = sovereignKernelInstance.syscallTable.find(s => s.name === syscall || s.signature.includes(syscall));
+        num = found ? found.number : 1;
+      } else {
+        num = 1;
+      }
+    }
+    const result = sovereignKernelInstance.executeSyscall(num, callerAgent || 'architect', payload);
     res.json(result);
   });
 

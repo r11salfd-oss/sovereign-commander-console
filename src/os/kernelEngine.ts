@@ -660,7 +660,7 @@ export class SovereignKernel {
       sourceAgent: callerAgent || 'interface-agent',
       targetAgent: payload?.target || 'sov_kernel_core',
       syscallNum: num,
-      payloadSize: JSON.stringify(payload).length,
+      payloadSize: JSON.stringify(payload || {}).length,
       checksum: 'sha256:' + Math.random().toString(36).substring(2, 10),
       timestamp: new Date().toISOString(),
       zeroCopyPointer: `0xFFFFC90000${(sc.totalCalls * 64 % 65536).toString(16).padStart(6, '0')}`,
