@@ -52,18 +52,14 @@ export default function TestAutomationPage() {
 
   const [continuousLoop, setContinuousLoop] = useState(false);
 
-  // Load cached report on init and auto-trigger initial pass
+  // Load cached report on init if available; no deceptive auto-execution
   useEffect(() => {
     try {
       const cached = localStorage.getItem('sov_latest_test_run_report');
       if (cached) {
         setLatestReport(JSON.parse(cached));
-      } else {
-        handleRunAllTests('all');
       }
-    } catch {
-      handleRunAllTests('all');
-    }
+    } catch {}
   }, []);
 
   // Continuous monitoring loop if enabled
@@ -383,9 +379,11 @@ export default function TestAutomationPage() {
             <span className="text-[11px] font-mono text-slate-400">إجمالي الشروط المفحوصة (Assertions)</span>
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-black text-emerald-400 font-mono">
-                {latestReport ? `${latestReport.passedAssertionsCount}/${latestReport.totalAssertionsCount}` : '49/49'}
+                {latestReport ? `${latestReport.passedAssertionsCount}/${latestReport.totalAssertionsCount}` : '-'}
               </span>
-              <span className="text-[10px] text-emerald-500 font-mono">100% مطابقة</span>
+              <span className="text-[10px] text-emerald-500 font-mono">
+                {latestReport ? `${latestReport.passPercentage}% مطابقة هندسية` : 'بانتظار أمر الإطلاق'}
+              </span>
             </div>
           </div>
 
@@ -393,7 +391,7 @@ export default function TestAutomationPage() {
             <span className="text-[11px] font-mono text-slate-400">نسبة النجاح (Deep Pass Rate)</span>
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-black text-emerald-400 font-mono">
-                {latestReport ? `${latestReport.passPercentage}%` : '100%'}
+                {latestReport ? `${latestReport.passPercentage}%` : '-'}
               </span>
               <span className="text-[10px] text-slate-400 font-mono">
                 {latestReport ? `${latestReport.passedCount} نجح` : 'جاهز'}
@@ -402,12 +400,14 @@ export default function TestAutomationPage() {
           </div>
 
           <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col gap-1">
-            <span className="text-[11px] font-mono text-slate-400">زمن التنفيذ الكلي</span>
+            <span className="text-[11px] font-mono text-slate-400">زمن التنفيذ الفعلي (Live Measured)</span>
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-black text-cyan-400 font-mono">
                 {latestReport ? `${latestReport.totalDurationMs}ms` : '0ms'}
               </span>
-              <span className="text-[10px] text-slate-400 font-mono">استجابة فائقة</span>
+              <span className="text-[10px] text-cyan-400 font-mono">
+                {latestReport ? `${(latestReport.totalDurationMs / 1000).toFixed(2)} ثانية فحص متعدد المراحل` : 'بانتظار الفحص'}
+              </span>
             </div>
           </div>
         </div>
