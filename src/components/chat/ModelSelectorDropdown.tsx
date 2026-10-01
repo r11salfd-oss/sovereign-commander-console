@@ -85,6 +85,28 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     icon: Cpu
   },
   {
+    id: 'antigravity-preview-09-2026',
+    name: 'antigravity-core',
+    badge: 'Antigravity Autonomous (Pro)',
+    badgeColor: 'bg-fuchsia-950/80 text-fuchsia-300 border-fuchsia-500/60',
+    borderColor: 'border-fuchsia-500/70 shadow-[0_0_12px_rgba(217,70,239,0.25)]',
+    specialty: 'Antigravity Autonomous Agent Engine',
+    descriptionAr: 'محرك Antigravity السيادي المتقدم للاستدلال والتنفيذ التلقائي لمهام الكود وربط الوكلاء بحساب Google AI Pro.',
+    descriptionEn: 'Autonomous Antigravity engine linked directly to verified Commander Pro tier (r11salfd@gmail.com).',
+    icon: Flame
+  },
+  {
+    id: 'deep-research-preview-04-2026',
+    name: 'deep-research-preview',
+    badge: 'Google AI Pro (Research)',
+    badgeColor: 'bg-sky-950/80 text-sky-300 border-sky-500/60',
+    borderColor: 'border-sky-500/70 shadow-[0_0_12px_rgba(14,165,233,0.25)]',
+    specialty: 'Deep Autonomous Research & Synthesis',
+    descriptionAr: 'نموذج البحث والتحليل المعمق وتوليد الاستنتاجات الشاملة، مفعّل لحساب Google AI Pro (5TB).',
+    descriptionEn: 'Deep autonomous research engine enabled for Google AI Pro tier subscription.',
+    icon: Layers
+  },
+  {
     id: 'opencode/muse-spark-1.3-contributor-free',
     name: 'muse-spark-1.3',
     badge: 'OpenCode Zen Muse 1.3',
