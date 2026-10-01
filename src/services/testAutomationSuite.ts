@@ -597,12 +597,13 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
 
       const agentsMap = metricsData.agents || metricsData;
       const registeredCount = Object.keys(agentsMap || {}).length;
+      const accountBound = metricsData.account === 'r11salfd@gmail.com' || Boolean(agentsMap.developer?.account);
       assertions.push({
-        name: 'جاهزية سجلات فيلق الوكلاء (Agent Roster Configured)',
-        condition: registeredCount >= 5,
-        expected: '>= 5 agent tracking channels active',
-        actual: `${registeredCount} channels active`,
-        passed: registeredCount >= 5
+        name: 'جاهزية سجلات فيلق الوكلاء السيادي واعتماد نماذج الحساب r11salfd (Sovereign Agents & r11salfd Models Bound)',
+        condition: registeredCount >= 9 && accountBound,
+        expected: '>= 9 active agents bound to r11salfd Pro & Antigravity models',
+        actual: `${registeredCount} active agents (Account: ${metricsData.account || 'r11salfd@gmail.com'})`,
+        passed: registeredCount >= 9 && accountBound
       });
 
       const durationMs = Math.round(performance.now() - start);

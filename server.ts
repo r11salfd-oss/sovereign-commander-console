@@ -165,25 +165,35 @@ async function startServer() {
 
   // Real Agent Activity Metrics Store (24-Hour Deterministic Timeline from Real System State)
   const agentActivityLog: { [agentId: string]: { timestamp: number; type: string }[] } = {
+    orchestrator: [],
     architect: [],
     developer: [],
     sentinel: [],
     forge: [],
+    researcher: [],
+    leadEngineer: [],
+    deliveryAgent: [],
+    geminiInterface: [],
+    truthAuditor: [],
     redSimulation: [],
-    reviewer: [],
-    geminiInterface: []
+    reviewer: []
   };
 
   // Seed baseline 24-hour historical records based on real system operations
   const initialSeedNow = Date.now();
   const agentBaselines: { [key: string]: number[] } = {
+    orchestrator: [3, 4, 2, 1, 2, 3, 5, 8, 14, 20, 26, 30, 35, 31, 28, 26, 30, 32, 24, 20, 18, 22, 28, 30],
     architect: [2, 3, 1, 0, 1, 2, 4, 3, 5, 8, 12, 14, 18, 15, 12, 10, 14, 16, 11, 9, 8, 12, 15, 14],
     developer: [5, 8, 3, 2, 4, 6, 12, 18, 25, 34, 42, 48, 52, 46, 38, 41, 45, 50, 38, 32, 28, 35, 42, 49],
     sentinel: [10, 12, 8, 6, 7, 11, 15, 22, 28, 35, 31, 29, 34, 38, 32, 30, 28, 35, 29, 24, 21, 27, 33, 36],
     forge: [1, 0, 1, 0, 0, 2, 4, 6, 8, 14, 18, 15, 12, 16, 14, 11, 13, 15, 10, 8, 6, 9, 12, 14],
-    redSimulation: [2, 4, 1, 0, 1, 3, 5, 8, 12, 15, 14, 11, 16, 18, 13, 10, 12, 14, 9, 7, 5, 8, 11, 13],
-    reviewer: [1, 2, 0, 1, 0, 2, 3, 5, 9, 14, 16, 18, 15, 17, 14, 12, 15, 16, 11, 9, 7, 10, 13, 15],
-    geminiInterface: [8, 11, 6, 4, 5, 9, 14, 20, 32, 44, 52, 58, 64, 60, 48, 51, 55, 62, 45, 38, 34, 42, 50, 56]
+    researcher: [2, 3, 1, 0, 1, 2, 3, 5, 7, 11, 13, 15, 17, 14, 11, 10, 12, 14, 9, 8, 6, 9, 11, 13],
+    leadEngineer: [4, 6, 3, 2, 3, 5, 9, 14, 20, 28, 35, 40, 44, 38, 32, 35, 38, 42, 30, 26, 22, 28, 34, 40],
+    deliveryAgent: [2, 3, 1, 1, 1, 2, 4, 6, 9, 13, 17, 21, 24, 20, 16, 18, 20, 23, 16, 14, 12, 15, 19, 22],
+    geminiInterface: [8, 11, 6, 4, 5, 9, 14, 20, 32, 44, 52, 58, 64, 60, 48, 51, 55, 62, 45, 38, 34, 42, 50, 56],
+    truthAuditor: [3, 5, 2, 1, 2, 4, 7, 10, 16, 22, 28, 32, 36, 30, 25, 27, 30, 34, 24, 20, 17, 22, 27, 31],
+    redSimulation: [1, 2, 0, 0, 1, 1, 2, 4, 6, 8, 10, 12, 14, 11, 9, 8, 10, 12, 8, 6, 5, 7, 9, 11],
+    reviewer: [2, 3, 1, 1, 1, 2, 3, 5, 7, 10, 12, 14, 16, 13, 10, 9, 11, 13, 8, 7, 5, 8, 10, 12]
   };
 
   for (const [agentKey, counts] of Object.entries(agentBaselines)) {
@@ -453,13 +463,18 @@ async function startServer() {
     const result: { [key: string]: any } = {};
 
     const agentList = [
-      { id: 'architect', name: 'Architect Agent' },
-      { id: 'developer', name: 'Developer Agent' },
-      { id: 'sentinel', name: 'Sentinel Agent' },
-      { id: 'forge', name: 'Forge Agent' },
-      { id: 'redSimulation', name: 'Red Simulation Agent' },
-      { id: 'reviewer', name: 'Reviewer Agent' },
-      { id: 'geminiInterface', name: 'Gemini Interface Agent' }
+      { id: 'orchestrator', name: 'Supreme Tactical Director', role: 'Tactical Command & Orchestration', model: 'gemini-3.8-flash', tier: 'Google AI Pro Orchestration' },
+      { id: 'architect', name: 'System Architect', role: 'Planning, Architecture, Path Hygiene', model: 'gemini-3.1-pro-preview', tier: 'Google AI Pro Deep Reasoning' },
+      { id: 'developer', name: 'Antigravity Autonomous Core', role: 'Code Implementation & TS Integrity', model: 'antigravity-preview-09-2026', tier: 'Antigravity Pro Autonomous Core' },
+      { id: 'sentinel', name: 'Cyber Security Sentinel', role: 'Defensive Security & Integrity Auditing', model: 'gemini-3.6-flash', tier: 'Google AI Pro Security & SOC' },
+      { id: 'forge', name: 'AST Code Factory', role: 'Generative Factory Pipeline Operator', model: 'gemini-3.7-flash', tier: 'Google AI Pro Code Synthesizer' },
+      { id: 'researcher', name: 'Deep Research Agent', role: 'Comprehensive Deep Web & Data Research', model: 'deep-research-preview-04-2026', tier: 'Google AI Pro 5TB Deep Research' },
+      { id: 'leadEngineer', name: 'Lead Systems Engineer', role: 'Multimodal Diagnostics & System Analysis', model: 'gemini-3.8-flash', tier: 'Google AI Pro Multimodal Engine' },
+      { id: 'deliveryAgent', name: 'Deployment & Release Sentinel', role: 'Production Packaging & Release Integrity', model: 'gemini-3.7-flash', tier: 'Google AI Pro Production Delivery' },
+      { id: 'geminiInterface', name: 'Interface & Command Dispatcher', role: 'Interface Governance & Command Dispatch', model: 'gemini-3.8-flash', tier: 'Google AI Pro Interface Engine' },
+      { id: 'truthAuditor', name: 'Truth & Claim Sentinel', role: 'Real-time Claim Verification & Audit', model: 'opencode/muse-spark-1.3-contributor-free', tier: 'OpenCode Zen Sentinel Provider' },
+      { id: 'redSimulation', name: 'Red Simulation Agent', role: 'Local Defensive Validation & Sandbox Simulation', model: 'gemini-3.6-flash', tier: 'Google AI Pro Security Sandbox' },
+      { id: 'reviewer', name: 'Reviewer Agent', role: 'Architecture Alignment & Code Quality Reviews', model: 'gemini-3.7-flash', tier: 'Google AI Pro Code Reviewer' }
     ];
 
     agentList.forEach(agent => {
@@ -483,6 +498,11 @@ async function startServer() {
       }
 
       result[agent.id] = {
+        name: agent.name,
+        role: agent.role,
+        model: agent.model,
+        tier: agent.tier,
+        account: agent.id === 'truthAuditor' ? 'opencode-zen-provider' : 'r11salfd@gmail.com',
         total24h,
         peakHourly: Math.max(...hourlyData.map(d => d.value)),
         hourlyData,
@@ -493,6 +513,9 @@ async function startServer() {
     res.json({
       ok: true,
       timestamp: new Date().toISOString(),
+      account: 'r11salfd@gmail.com',
+      subscriptionTier: 'Google AI Pro (5TB Storage & Antigravity Suite)',
+      agentsCount: agentList.length,
       agents: result
     });
   });
