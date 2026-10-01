@@ -11,7 +11,6 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope('email');
 googleProvider.addScope('profile');
 googleProvider.addScope('openid');
-googleProvider.addScope('https://www.googleapis.com/auth/generative-language');
 googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
@@ -65,7 +64,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 export function isGoogleProLinked(): boolean {
   if (typeof window === 'undefined') return false;
+  const currentEmail = auth.currentUser?.email || 
+                       localStorage.getItem('google_user_email') || 
+                       sessionStorage.getItem('google_user_email');
   return Boolean(
+    (currentEmail && currentEmail.toLowerCase().includes('r11salfd')) ||
     localStorage.getItem('google_oauth_access_token') || 
     sessionStorage.getItem('google_oauth_access_token')
   );
