@@ -657,6 +657,44 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
         passed: outputMatches
       });
 
+      // 3. Verify Forge Protocol Matrix (OpenCode + MCP + LSP Integration)
+      const overviewRes = await safeFetch('/api/forge/overview', undefined, 4000);
+      const overviewData = await safeJson(overviewRes);
+      const matrixBound = overviewRes.ok && 
+        overviewData.mcpIntegration?.status === 'CONNECTED' &&
+        overviewData.lspIntegration?.status === 'READY' &&
+        overviewData.openCodeIntegration?.status === 'CONNECTED';
+
+      assertions.push({
+        name: 'ترابط مصنع الأكواد بشبكة OpenCode وخوادم MCP و LSP (Forge Multi-Protocol Matrix)',
+        condition: matrixBound,
+        expected: 'Forge connected to OpenCode Zen + 7 MCP Servers + 6 LSP Servers',
+        actual: matrixBound 
+          ? `Connected: MCP (${overviewData.mcpIntegration.toolsCount} tools), LSP (${overviewData.lspIntegration.serversCount} servers), OpenCode (${overviewData.openCodeIntegration.models.length} models)`
+          : 'Failed to verify protocol matrix',
+        passed: matrixBound
+      });
+
+      // 4. Verify Live Language Server Protocol (LSP) TypeScript AST Validator
+      const lspValRes = await safeFetch('/api/forge/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: 'export interface SovereignContract { chainKey: string; active: boolean; }\nexport const contract: SovereignContract = { chainKey: "360ea36c28e66d9d", active: true };',
+          language: 'typescript'
+        })
+      }, 4000);
+      const lspValData = await safeJson(lspValRes);
+      const lspPassed = lspValRes.ok && lspValData.passed === true && lspValData.errorsCount === 0;
+
+      assertions.push({
+        name: 'تدقيق سلامة الأكواد عبر خادم LSP الحقيقي (tsserver AST Diagnostics)',
+        condition: lspPassed,
+        expected: 'LSP Diagnostics pass with 0 syntax errors',
+        actual: lspPassed ? `LSP Verified: ${lspValData.lspServer} (0 errors)` : `Errors: ${lspValData.errorsCount}`,
+        passed: lspPassed
+      });
+
       const durationMs = Math.round(performance.now() - start);
       const allPassed = assertions.every(a => a.passed);
       return {
