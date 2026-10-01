@@ -271,13 +271,19 @@ export default function ChatChamberPage() {
     messageId?: string;
     timestamp: string;
     agentName: string;
+    userPrompt?: string;
     claimedMessage: string;
     verdict: 'VERIFIED' | 'UNVERIFIED';
     explanation: string;
     provider: string;
   }
 
-  const [claimVerifications, setClaimVerifications] = useState<Record<string, { verdict: 'VERIFIED' | 'UNVERIFIED'; explanation: string; provider: string }>>({});
+  const [claimVerifications, setClaimVerifications] = useState<Record<string, { 
+    verdict: 'VERIFIED' | 'UNVERIFIED'; 
+    userPrompt?: string;
+    explanation: string; 
+    provider: string;
+  }>>({});
   const [verifyingMessageId, setVerifyingMessageId] = useState<string | null>(null);
   const [isAuditingLatest, setIsAuditingLatest] = useState(false);
   const [secretFeedTab, setSecretFeedTab] = useState<'secret_feed' | 'transcripts'>('secret_feed');
@@ -290,15 +296,44 @@ export default function ChatChamberPage() {
     }
   });
 
-  const handleVerifyClaim = async (messageId: string, agentName: string, claimedMessage: string) => {
+  const handleVerifyClaim = async (messageId: string, agentName: string, claimedMessage: string, explicitUserPrompt?: string) => {
     setVerifyingMessageId(messageId);
     try {
+      // Extract the Commander's directive (user prompt) and context
+      let promptToUse = explicitUserPrompt || '';
+      let contextToUse = '';
+      
+      const msgIndex = messages.findIndex(m => m.id === messageId);
+      if (!promptToUse && msgIndex !== -1) {
+        for (let i = msgIndex - 1; i >= 0; i--) {
+          if (messages[i].sender === 'user' && messages[i].text.trim()) {
+            promptToUse = messages[i].text.trim();
+            break;
+          }
+        }
+      }
+      if (!promptToUse) {
+        const userMsgs = messages.filter(m => m.sender === 'user' && m.text.trim());
+        if (userMsgs.length > 0) {
+          promptToUse = userMsgs[userMsgs.length - 1].text.trim();
+        }
+      }
+
+      if (msgIndex !== -1) {
+        contextToUse = messages
+          .slice(Math.max(0, msgIndex - 3), msgIndex)
+          .map(m => `[${m.sender === 'user' ? 'القائد الأعلى' : m.agent || 'الوكيل'}]: ${m.text.slice(0, 300)}`)
+          .join('\n\n');
+      }
+
       const res = await fetch('/api/chat/verify-claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agentName,
-          claimedMessage
+          claimedMessage,
+          userPrompt: promptToUse,
+          context: contextToUse
         })
       });
       const data = await res.json();
@@ -307,6 +342,7 @@ export default function ChatChamberPage() {
           ...prev,
           [messageId]: {
             verdict: data.verdict,
+            userPrompt: promptToUse,
             explanation: data.explanation,
             provider: data.provider || 'OpenCode Zen (muse1.3)'
           }
@@ -317,6 +353,7 @@ export default function ChatChamberPage() {
           messageId,
           timestamp: new Date().toISOString(),
           agentName,
+          userPrompt: promptToUse,
           claimedMessage,
           verdict: data.verdict,
           explanation: data.explanation,
@@ -1108,31 +1145,47 @@ export default function ChatChamberPage() {
                             {/* Render Truth Sentinel Verification Report if requested */}
                             {claimVerifications[m.id] && (
                               <div className={cn(
-                                "p-3 rounded-lg border text-xs font-mono leading-relaxed transition-all shadow-inner",
+                                "p-3.5 rounded-xl border text-xs font-mono leading-relaxed transition-all shadow-xl space-y-2.5",
                                 claimVerifications[m.id].verdict === 'VERIFIED'
-                                  ? "bg-emerald-950/40 border-emerald-600/60 text-emerald-200"
-                                  : "bg-amber-950/50 border-amber-500/70 text-amber-100"
+                                  ? "bg-emerald-950/40 border-emerald-600/70 text-emerald-100"
+                                  : "bg-amber-950/60 border-amber-500/80 text-amber-100"
                               )}>
-                                <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-white/10 font-bold text-[10px]">
+                                <div className="flex items-center justify-between pb-2 border-b border-white/10 font-bold text-[10px]">
                                   <div className="flex items-center gap-1.5">
-                                    <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                                    <span>تقرير محقق صدق العمليات (Truth Sentinel)</span>
+                                    <ShieldCheck className="w-4 h-4 text-amber-400" />
+                                    <span className="text-white text-[11px]">تقرير محقق صدق العمليات (Truth Sentinel)</span>
                                   </div>
                                   <span className={cn(
-                                    "px-1.5 py-0.5 rounded text-[9px] uppercase font-bold",
+                                    "px-2 py-0.5 rounded text-[9px] uppercase font-bold",
                                     claimVerifications[m.id].verdict === 'VERIFIED'
-                                      ? "bg-emerald-900 text-emerald-300 border border-emerald-500"
-                                      : "bg-rose-950 text-rose-300 border border-rose-600"
+                                      ? "bg-emerald-900/90 text-emerald-300 border border-emerald-500"
+                                      : "bg-rose-950/90 text-rose-300 border border-rose-600"
                                   )}>
                                     {claimVerifications[m.id].verdict === 'VERIFIED' ? '✓ ادعاء موثق وحقيقي' : '⚠️ ادعاء غير موثق / نص إنشائي'}
                                   </span>
                                 </div>
-                                <div className="prose prose-invert prose-xs max-w-none text-right font-sans text-slate-200">
+
+                                {/* Commander Directive Quoted */}
+                                {claimVerifications[m.id].userPrompt && (
+                                  <div className="p-2.5 rounded-lg bg-emerald-950/50 border border-emerald-700/60 text-[10px] text-emerald-200">
+                                    <div className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
+                                      <User className="w-3 h-3 text-emerald-400" />
+                                      <span>أمر ورسالة القائد الأعلى المفحوصة:</span>
+                                    </div>
+                                    <div className="line-clamp-4 font-sans leading-relaxed text-emerald-100/90">
+                                      {claimVerifications[m.id].userPrompt}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Truth Sentinel Breakdown and Direct Reply to Commander */}
+                                <div className="prose prose-invert prose-xs max-w-none text-right font-sans text-slate-100 bg-black/60 p-3 rounded-lg border border-white/10 leading-relaxed shadow-inner">
                                   <ReactMarkdown>{claimVerifications[m.id].explanation}</ReactMarkdown>
                                 </div>
-                                <div className="mt-2 text-[9px] text-slate-400 flex items-center justify-between border-t border-white/5 pt-1">
-                                  <span>المزود: {claimVerifications[m.id].provider}</span>
-                                  <span className="text-amber-400 font-bold">بناءً على طلب القائد المباشر</span>
+
+                                <div className="text-[9px] text-slate-400 flex items-center justify-between border-t border-white/10 pt-1.5 font-mono">
+                                  <span>المحرك: <strong className="text-amber-400">{claimVerifications[m.id].provider}</strong></span>
+                                  <span className="text-emerald-400 font-bold">بناءً على أمر القائد المباشر</span>
                                 </div>
                               </div>
                             )}
@@ -1558,20 +1611,39 @@ export default function ChatChamberPage() {
                             )}
                           </div>
 
-                          {/* Claim Quoted */}
-                          <div className="p-1.5 rounded bg-slate-950/70 border border-slate-800 text-[10px] text-slate-400 line-clamp-2 italic">
-                            "{sec.claimedMessage}"
+                          {/* 1. Commander Directive */}
+                          {sec.userPrompt && (
+                            <div className="p-2 rounded bg-emerald-950/40 border border-emerald-800/60 text-[10px] text-emerald-200">
+                              <div className="font-bold text-[9px] text-emerald-400 mb-1 flex items-center gap-1">
+                                <User className="w-2.5 h-2.5" />
+                                <span>أمر ورسالة القائد الأعلى:</span>
+                              </div>
+                              <div className="line-clamp-3 font-sans leading-relaxed text-emerald-100/90">{sec.userPrompt}</div>
+                            </div>
+                          )}
+
+                          {/* 2. Agent Claim Quoted */}
+                          <div className="p-2 rounded bg-slate-950/70 border border-slate-800 text-[10px] text-slate-300">
+                            <div className="font-bold text-[9px] text-cyan-400 mb-1 flex items-center gap-1">
+                              <Bot className="w-2.5 h-2.5" />
+                              <span>رد وادعاء الوكيل ({sec.agentName}):</span>
+                            </div>
+                            <div className="line-clamp-3 italic font-sans text-slate-300/90">"{sec.claimedMessage}"</div>
                           </div>
 
-                          {/* Technical Secret Explanation */}
-                          <div className="text-[10px] text-slate-200 leading-relaxed font-sans bg-black/40 p-2 rounded border border-slate-800/50 prose prose-invert prose-xs max-w-none">
+                          {/* 3. Truth Sentinel Technical Report & Reply to Commander */}
+                          <div className="text-[10px] text-slate-200 leading-relaxed font-sans bg-black/50 p-2.5 rounded border border-slate-800/60 prose prose-invert prose-xs max-w-none shadow-inner">
+                            <div className="font-bold text-[9px] text-amber-400 mb-1 flex items-center gap-1 font-mono">
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              <span>تقرير المحقق والرد على القائد:</span>
+                            </div>
                             <ReactMarkdown>{sec.explanation}</ReactMarkdown>
                           </div>
 
                           {/* Footer Provider */}
-                          <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-800/40">
+                          <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-800/40 font-mono">
                             <span className="text-amber-400 font-bold">{sec.provider}</span>
-                            <span className="text-emerald-400">فحص جنائي سيادي</span>
+                            <span className="text-emerald-400 font-bold">فحص جنائي سيادي</span>
                           </div>
                         </div>
                       ))}

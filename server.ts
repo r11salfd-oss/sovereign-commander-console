@@ -1675,36 +1675,48 @@ echo ""
   // Dedicated Agent Claim & Truth Verification Endpoint (OpenCode Zen Muse 1.3)
   app.post('/api/chat/verify-claim', async (req, res) => {
     try {
-      const { agentName, claimedMessage, context } = req.body;
+      const { agentName, claimedMessage, userPrompt, context } = req.body;
       const model = 'opencode/muse-spark-1.3-contributor-free';
-      const prompt = `قم بفحص وتدقيق ادعاء الوكيل التالي:
-- اسم الوكيل: ${agentName || 'وكيل غير محدد'}
-- نص ادعاء الوكيل المطلوب التحقق منه:
+      const prompt = `أنت في جلسة تحقيق جنائي سيادي وتدقيق هندسي صارم لمطابقة الأوامر والادعاءات:
+══════════════════════════════════════════════════════════════════
+١. أوامر ورسالة القائد الأعلى (Commander Directive / Input):
+"""
+${userPrompt || 'لم تُحدد رسالة قائد مباشرة أو تم طلب فحص عام للنظام'}
+"""
+
+٢. رد وادعاء الوكيل الخاضع للتحقيق (${agentName || 'الوكيل'}):
 """
 ${claimedMessage || ''}
 """
-${context ? `- سياق العملية الإضافي: ${context}` : ''}
+${context ? `٣. سياق التبادل والحوار البرمجي السابق:
+"""
+${context}
+"""` : ''}
+══════════════════════════════════════════════════════════════════
 
-المطلوب منك حصرياً:
-1. فحص هل ما يدعيه هذا الوكيل يمثل عملية تقنية حقيقية تم إنجازها وتوثيقها بأدلة ملموسة، أم أنه مجرد تقمص دور وسياق إنشائي (Hallucination)؟
-2. إصدار الحكم الصريح:
-   - [الحكم: ادعاء موثق وحقيقي]
-   - أو [الحكم: ادعاء غير موثق / نص إنشائي]
-3. شرح مفصل بالأدلة والقرائن التقنية.`;
+المطلوب منك حصرياً إجراء فحص ثلاثي الأبعاد والرد المباشر والشامل على القائد:
+١. مطابقة الأوامر (Directive Compliance): هل استجاب الوكيل لجوهر ما طلبه القائد ونفذه فعلياً، أم تهرّب أو قدّم وعوداً مستقبلية أو اختلق حالات وهمية ومبررات؟
+٢. الأدلة المادية والعملياتية (Operational Evidence): هل قدّم الوكيل مخرجات CLI حقيقية، أوامر بأرقام خروج 0، مسارات ملفات وتعديلات ملموسة، أم مجرد نصوص إنشائية تخيلية (Hallucinations)؟
+٣. إصدار الحكم الصريح في السطر الأول:
+   - [الحكم: ادعاء موثق وحقيقي / تنفيذ مطابق للأمر]
+   - أو [الحكم: ادعاء غير موثق / نص إنشائي التفافي / عدم تنفيذ]
+٤. الشرح والرد على القائد (Explanation to Commander):
+   - تفكيك ما طلبه القائد وما قاله الوكيل وما تم فعلاً وما لم يتم بكل صدق وحيادية هندسية مطلقة دون أي مجاملة.`;
 
       const result = await generateAntigravityAI(
         model,
-        `أنت وكيل ومحقق تدقيق صحة الادعاء والتحقق من العمليات (Truth & Claim Sentinel) المزود عبر OpenCode Zen بموديل muse1.3 free. أجب بصرامة وحيادية عسكرية خالصة دون أي مجاملة.`,
+        `أنت محقق الحوكمة والصدق السيادي (Truth & Claim Sentinel) العامل بمحرك OpenCode Zen Muse 1.3. مهمتك التدقيق الجنائي في أوامر القائد وردود الوكلاء وفصل الحقائق الملموسة عن التخيل والتهرب. أجب بصرامة ودقة عسكرية باللغة العربية الفصحى.`,
         prompt,
         { email: 'r11salfd@gmail.com' }
       );
 
-      const isVerified = result.text.includes('ادعاء موثق') || result.text.includes('صادق');
+      const isVerified = result.text.includes('ادعاء موثق وحقيقي') || result.text.includes('تنفيذ مطابق');
 
       res.json({
         ok: true,
         verifierAgent: 'Truth Sentinel (OpenCode Zen Muse 1.3)',
         verdict: isVerified ? 'VERIFIED' : 'UNVERIFIED',
+        userPrompt: userPrompt || null,
         explanation: result.text,
         provider: result.agentType || 'OpenCode Zen (muse1.3)',
         timestamp: new Date().toISOString()
