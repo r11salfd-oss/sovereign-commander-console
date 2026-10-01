@@ -83,6 +83,17 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     descriptionAr: 'النموذج القيادي الافتراضي لتوجيه الأوامر والتحكم السيادي العام.',
     descriptionEn: 'General tactical orchestrator for multi-agent dispatch.',
     icon: Cpu
+  },
+  {
+    id: 'opencode/space-bunny-free',
+    name: 'space-bunny-free',
+    badge: 'OpenCode Zen Gateway',
+    badgeColor: 'bg-purple-950/80 text-purple-300 border-purple-500/60',
+    borderColor: 'border-purple-500/70 shadow-[0_0_12px_rgba(168,85,247,0.25)]',
+    specialty: 'OpenCode Zen Community Coder',
+    descriptionAr: 'بوابة OpenCode Zen الخارجية للاستدلال السريع والأكواد المفتوحة (opencode.ai/zen).',
+    descriptionEn: 'OpenCode Zen autonomous gateway model for open programming workflows.',
+    icon: Terminal
   }
 ];
 

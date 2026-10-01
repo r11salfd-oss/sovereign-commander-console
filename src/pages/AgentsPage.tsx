@@ -286,11 +286,13 @@ export default function AgentsPage() {
                     onChange={e => handleModelChange(agent.id, e.target.value)}
                     className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-amber-300 font-mono focus:outline-none focus:border-cyan-500"
                   >
+                    <option value="gemini-3.6-flash">gemini-3.6-flash (Cybersecurity & Sentinel SOC)</option>
+                    <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Ultra Fast Streamer - 600ms)</option>
+                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Ultra Lightweight)</option>
                     <option value="gemini-3.8-flash">gemini-3.8-flash (Fast Tactical & Operations)</option>
                     <option value="gemini-3.7-flash">gemini-3.7-flash (Multimodal & Advanced Vision)</option>
-                    <option value="gemini-3.6-flash">gemini-3.6-flash (Cybersecurity & Sentinel SOC)</option>
                     <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Deep Reasoning)</option>
-                    <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Ultra Lightweight)</option>
+                    <option value="opencode/space-bunny-free">opencode/space-bunny-free (OpenCode Zen Gateway)</option>
                     <option value="antigravity-preview-09-2026">antigravity-preview-09-2026 (Remote Sandbox)</option>
                     <option value="deep-research-preview-04-2026">deep-research-preview-04-2026 (Research Core)</option>
                   </select>

@@ -1336,6 +1336,27 @@ echo ""
     });
   });
 
+  // OpenCode Zen Catalog Endpoint (opencode.ai/zen Gateway)
+  app.get('/api/opencode/zen/models', async (req, res) => {
+    try {
+      const resp = await fetch('https://opencode.ai/zen/v1/models');
+      if (resp.ok) {
+        const data: any = await resp.json();
+        return res.json({
+          ok: true,
+          gateway: 'https://opencode.ai/zen/v1',
+          models: data.data || [],
+          total: (data.data || []).length,
+          status: 'CONNECTED',
+          timestamp: new Date().toISOString()
+        });
+      }
+      res.status(resp.status).json({ ok: false, error: 'OpenCode Zen returned status ' + resp.status });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // Dedicated Gemini Connection Health Ping
   app.get('/api/gemini/ping', async (req, res) => {
     const startTime = Date.now();
@@ -1378,6 +1399,48 @@ echo ""
     console.log(`[AI Engine] Multimodal request for ${tgtModel}. User: ${accountEmail}. HasImage: ${Boolean(image)}`);
 
     try {
+      // 0. OpenCode Zen Gateway Provider (opencode.ai/zen)
+      if (tgtModel.startsWith('opencode/') || tgtModel.startsWith('zen/') || tgtModel === 'space-bunny-free') {
+        const zenModelId = tgtModel.replace(/^(opencode\/|zen\/)/, '');
+        const zenApiKey = process.env.OPENCODE_API_KEY || process.env.ZEN_API_KEY || '';
+        try {
+          const zenHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'opencode/2.4.1 (linux; x64)'
+          };
+          if (zenApiKey) {
+            zenHeaders['Authorization'] = `Bearer ${zenApiKey}`;
+          }
+          const zenResp = await fetch('https://opencode.ai/zen/v1/chat/completions', {
+            method: 'POST',
+            headers: zenHeaders,
+            body: JSON.stringify({
+              model: zenModelId,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                ...(history || []).map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text || '' })),
+                { role: 'user', content: userMessage || 'فحص تشغيلي' }
+              ],
+              max_tokens: 2048,
+              temperature: 0.4
+            })
+          });
+          if (zenResp.ok) {
+            const zenData: any = await zenResp.json();
+            const textOutput = zenData.choices?.[0]?.message?.content;
+            if (textOutput) {
+              return {
+                text: textOutput,
+                agentType: `OpenCode Zen (${zenModelId})`,
+                authVerified: true
+              };
+            }
+          }
+        } catch (zenErr: any) {
+          console.warn(`[OpenCode Zen]: Error calling Zen gateway (${zenErr.message}), cascading to sovereign neural mesh.`);
+        }
+      }
+
       // 1. Direct Google Generative Language REST with OAuth Token (if active)
       if (userAuth.oauthToken) {
         try {
