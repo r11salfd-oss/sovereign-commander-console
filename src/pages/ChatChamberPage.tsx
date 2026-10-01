@@ -273,13 +273,13 @@ export default function ChatChamberPage() {
     agentName: string;
     userPrompt?: string;
     claimedMessage: string;
-    verdict: 'VERIFIED' | 'UNVERIFIED';
+    verdict: 'VERIFIED' | 'UNVERIFIED' | 'READINESS' | 'INCONCLUSIVE';
     explanation: string;
     provider: string;
   }
 
   const [claimVerifications, setClaimVerifications] = useState<Record<string, { 
-    verdict: 'VERIFIED' | 'UNVERIFIED'; 
+    verdict: 'VERIFIED' | 'UNVERIFIED' | 'READINESS' | 'INCONCLUSIVE'; 
     userPrompt?: string;
     explanation: string; 
     provider: string;
@@ -1148,20 +1148,31 @@ export default function ChatChamberPage() {
                                 "p-3.5 rounded-xl border text-xs font-mono leading-relaxed transition-all shadow-xl space-y-2.5",
                                 claimVerifications[m.id].verdict === 'VERIFIED'
                                   ? "bg-emerald-950/40 border-emerald-600/70 text-emerald-100"
+                                  : claimVerifications[m.id].verdict === 'READINESS'
+                                  ? "bg-cyan-950/40 border-cyan-600/70 text-cyan-100"
+                                  : claimVerifications[m.id].verdict === 'INCONCLUSIVE'
+                                  ? "bg-slate-900/60 border-slate-600/70 text-slate-100"
                                   : "bg-amber-950/60 border-amber-500/80 text-amber-100"
                               )}>
                                 <div className="flex items-center justify-between pb-2 border-b border-white/10 font-bold text-[10px]">
                                   <div className="flex items-center gap-1.5">
                                     <ShieldCheck className="w-4 h-4 text-amber-400" />
-                                    <span className="text-white text-[11px]">تقرير محقق صدق العمليات (Truth Sentinel)</span>
+                                    <span className="text-white text-[11px]">تقرير محقق النزاهة والصدق (Truth Sentinel)</span>
                                   </div>
                                   <span className={cn(
-                                    "px-2 py-0.5 rounded text-[9px] uppercase font-bold",
+                                    "px-2 py-0.5 rounded text-[9px] uppercase font-bold flex items-center gap-1",
                                     claimVerifications[m.id].verdict === 'VERIFIED'
                                       ? "bg-emerald-900/90 text-emerald-300 border border-emerald-500"
+                                      : claimVerifications[m.id].verdict === 'READINESS'
+                                      ? "bg-cyan-950/90 text-cyan-300 border border-cyan-600"
+                                      : claimVerifications[m.id].verdict === 'INCONCLUSIVE'
+                                      ? "bg-slate-800/90 text-slate-300 border border-slate-600"
                                       : "bg-rose-950/90 text-rose-300 border border-rose-600"
                                   )}>
-                                    {claimVerifications[m.id].verdict === 'VERIFIED' ? '✓ ادعاء موثق وحقيقي' : '⚠️ ادعاء غير موثق / نص إنشائي'}
+                                    {claimVerifications[m.id].verdict === 'VERIFIED' && '✓ موثق بأدلة تقنية تشغيلية'}
+                                    {claimVerifications[m.id].verdict === 'READINESS' && 'ℹ️ إقرار جاهزية واستعداد مشروع'}
+                                    {claimVerifications[m.id].verdict === 'INCONCLUSIVE' && '❓ غير حاسم / بحاجة لمعطيات'}
+                                    {claimVerifications[m.id].verdict === 'UNVERIFIED' && '⚠️ ادعاء غير موثق / مبالغة إنشائية'}
                                   </span>
                                 </div>
 
@@ -1598,15 +1609,28 @@ export default function ChatChamberPage() {
 
                           {/* Verdict Badge */}
                           <div className="flex items-center gap-1.5">
-                            {sec.verdict === 'VERIFIED' ? (
+                            {sec.verdict === 'VERIFIED' && (
                               <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-600 font-bold text-[10px] flex items-center gap-1">
                                 <CheckCircle2 className="w-3 h-3" />
-                                <span>[✓ ادعاء موثق بأدلة تقنية]</span>
+                                <span>[✓ موثق بأدلة تقنية تشغيلية]</span>
                               </span>
-                            ) : (
+                            )}
+                            {sec.verdict === 'READINESS' && (
+                              <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-600 font-bold text-[10px] flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+                                <span>[ℹ️ إقرار جاهزية واستعداد مشروع]</span>
+                              </span>
+                            )}
+                            {sec.verdict === 'INCONCLUSIVE' && (
+                              <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-600 font-bold text-[10px] flex items-center gap-1">
+                                <ShieldCheck className="w-3 h-3 text-slate-400" />
+                                <span>[❓ غير حاسم / بحاجة لمعطيات إضافية]</span>
+                              </span>
+                            )}
+                            {sec.verdict === 'UNVERIFIED' && (
                               <span className="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-600 font-bold text-[10px] flex items-center gap-1">
-                                <ShieldAlert className="w-3 h-3" />
-                                <span>[⚠️ ادعاء غير موثق / نص إنشائي]</span>
+                                <ShieldAlert className="w-3 h-3 text-amber-400" />
+                                <span>[⚠️ ادعاء غير موثق / مبالغة إنشائية]</span>
                               </span>
                             )}
                           </div>
