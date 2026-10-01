@@ -52,6 +52,17 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     icon: Brain
   },
   {
+    id: 'gemini-3.5-flash-lite',
+    name: 'gemini-3.5-flash-lite',
+    badge: 'استجابة فائقة السرعة',
+    badgeColor: 'bg-emerald-950/80 text-emerald-300 border-emerald-500/60',
+    borderColor: 'border-emerald-500/70 shadow-[0_0_12px_rgba(16,185,129,0.25)]',
+    specialty: 'Ultra-Fast Lightweight Streamer',
+    descriptionAr: 'أسرع نموذج استجابة لحظية (600ms) للمهام السريعة ومعالجة البيانات المتدفقة.',
+    descriptionEn: 'High throughput ultra-fast low-latency execution model.',
+    icon: Sparkles
+  },
+  {
     id: 'gemini-3.1-flash-lite',
     name: 'gemini-3.1-flash',
     badge: 'فائق السرعة وخفيف',

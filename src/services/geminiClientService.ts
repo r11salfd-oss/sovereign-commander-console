@@ -14,6 +14,9 @@ import { GoogleGenAI } from '@google/genai';
  */
 export const ALLOWED_GEMINI_MODELS = [
   'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
   'gemini-3.1-pro-preview',
   'gemini-3.1-flash-lite',
@@ -24,6 +27,18 @@ export const ALLOWED_GEMINI_MODELS = [
 
 export type SupportedGeminiModel = typeof ALLOWED_GEMINI_MODELS[number];
 
+/**
+ * Resilient Fallback Cascade Priority:
+ * Validated against live Google Gemini endpoints to bypass temporary 503 high-demand spikes
+ */
+export const MODEL_FALLBACK_CASCADE: readonly string[] = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-3.7-flash'
+] as const;
+
 export interface GeminiRequestOptions {
   model?: SupportedGeminiModel | string;
   systemInstruction?: string;
@@ -32,6 +47,7 @@ export interface GeminiRequestOptions {
   previousInteractionId?: string;
   responseMimeType?: string;
   responseSchema?: Record<string, any>;
+  enableFallback?: boolean;
 }
 
 export interface GeminiResponseEnvelope<T = string> {
@@ -43,6 +59,7 @@ export interface GeminiResponseEnvelope<T = string> {
   tokensEstimated: number;
   error?: string;
   migratedFrom?: string;
+  fallbackTriggered?: boolean;
 }
 
 /**
@@ -50,19 +67,19 @@ export interface GeminiResponseEnvelope<T = string> {
  */
 export function sanitizeModelName(requestedModel?: string): { activeModel: string; wasMigrated: boolean; original?: string } {
   if (!requestedModel) {
-    return { activeModel: 'gemini-3.8-flash', wasMigrated: false };
+    return { activeModel: 'gemini-3.6-flash', wasMigrated: false };
   }
 
   const modelLower = requestedModel.toLowerCase().trim();
 
-  // Deprecated 1.5 and 2.0 series automatic migration
+  // Deprecated 1.5, 2.0, and 2.5 series automatic migration
   if (
-    modelLower.includes('gemini-1.5') || 
-    modelLower.includes('gemini-2.0') || 
+    modelLower.includes('gemini-1.5') ||
+    modelLower.includes('gemini-2.0') ||
     modelLower.includes('gemini-2.5') ||
     modelLower.includes('gemini-pro-vision')
   ) {
-    const target = modelLower.includes('pro') ? 'gemini-3.1-pro-preview' : 'gemini-3.8-flash';
+    const target = modelLower.includes('pro') ? 'gemini-3.1-pro-preview' : 'gemini-3.6-flash';
     return { activeModel: target, wasMigrated: true, original: requestedModel };
   }
 
@@ -78,7 +95,7 @@ export class SovereignGeminiService {
   private apiKey: string = '';
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || process.env.GEMINI_API_KEY || process.env.Gemini_API || '';
+    this.apiKey = apiKey || process.env.Gemini_API || process.env.GEMINI_API_KEY || '';
     if (this.apiKey) {
       try {
         this.client = new GoogleGenAI({ apiKey: this.apiKey });
@@ -89,11 +106,11 @@ export class SovereignGeminiService {
   }
 
   public getClient(): GoogleGenAI | null {
-    if (!this.client && (process.env.GEMINI_API_KEY || process.env.Gemini_API)) {
-      this.apiKey = process.env.GEMINI_API_KEY || process.env.Gemini_API || '';
+    if (!this.client && (process.env.Gemini_API || process.env.GEMINI_API_KEY)) {
+      this.apiKey = process.env.Gemini_API || process.env.GEMINI_API_KEY || '';
       try {
         this.client = new GoogleGenAI({ apiKey: this.apiKey });
-      } catch (e) {}
+      } catch (e) { }
     }
     return this.client;
   }
@@ -152,6 +169,41 @@ export class SovereignGeminiService {
         migratedFrom: wasMigrated ? original : undefined
       };
     } catch (err: any) {
+      console.warn(`[Gemini Service] Model ${activeModel} invocation failed: ${err.message}. Evaluating fallback cascade...`);
+
+      // Attempt fallback models if primary model fails
+      if (options.enableFallback !== false) {
+        for (const fallbackModel of MODEL_FALLBACK_CASCADE) {
+          if (fallbackModel.toLowerCase() === activeModel.toLowerCase()) continue;
+          try {
+            console.log(`[Gemini Service] Attempting fallback to ${fallbackModel}...`);
+            const fallbackResponse = await client.models.generateContent({
+              model: fallbackModel,
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              config: {
+                temperature: options.temperature ?? 0.4,
+                systemInstruction: options.systemInstruction ? { parts: [{ text: options.systemInstruction }] } : undefined,
+                maxOutputTokens: options.maxOutputTokens
+              }
+            });
+
+            const fbText = fallbackResponse.text || '';
+            const fbEstimatedTokens = Math.ceil((prompt.length + fbText.length) / 3.5);
+            return {
+              success: true,
+              model: fallbackModel,
+              data: fbText,
+              latencyMs: Date.now() - start,
+              tokensEstimated: fbEstimatedTokens,
+              migratedFrom: activeModel,
+              fallbackTriggered: true
+            };
+          } catch (fbErr: any) {
+            console.warn(`[Gemini Service] Fallback model ${fallbackModel} failed: ${fbErr.message}`);
+          }
+        }
+      }
+
       return {
         success: false,
         model: activeModel,

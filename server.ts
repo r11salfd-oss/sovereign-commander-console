@@ -1373,7 +1373,7 @@ echo ""
     history?: { role: 'user' | 'model'; text: string }[],
     image?: { data: string; mimeType: string }
   ): Promise<{ text: string; agentType: string; authVerified: boolean }> {
-    const tgtModel = model || 'gemini-3.8-flash';
+    const tgtModel = model || 'gemini-3.6-flash';
     const accountEmail = userAuth.email || 'r11salfd@gmail.com';
     console.log(`[AI Engine] Multimodal request for ${tgtModel}. User: ${accountEmail}. HasImage: ${Boolean(image)}`);
 
@@ -1466,14 +1466,16 @@ echo ""
         }
       ];
 
-      // 2. Select resilient execution models
+      // 2. Select resilient execution models: prioritize verified low-latency active models
       const executionModels = Array.from(new Set([
         tgtModel,
+        'gemini-3.6-flash',
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
         'gemini-3.8-flash',
         'gemini-3.7-flash',
-        'gemini-3.6-flash',
-        'gemini-3.1-pro-preview',
-        'gemini-3.1-flash-lite'
+        'gemini-3.5-flash',
+        'gemini-3.1-pro-preview'
       ])).filter(Boolean);
 
       for (const m of executionModels) {

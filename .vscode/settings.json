@@ -166,7 +166,7 @@
     "typescriptreact": "javascript"
   },
   "tailwindCSS.emmetCompletions": true,
-  "tailwindCSS.validate": true,
+  "tailwindCSS.validate": false,
 
   // --- Terminal Profiles (Windows) ---
   "terminal.integrated.defaultProfile.windows": "PowerShell"
