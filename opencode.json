@@ -1,0 +1,200 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "name": "sovereign-commander-console",
+  "version": "3.8.0",
+  "instructions": [
+    "AGENTS.md",
+    "OPENCODE.md"
+  ],
+  "model": "antigravity/gemini-3.8-flash-high",
+  "small_model": "antigravity/gemini-3.1-flash-lite",
+  "provider": {
+    "antigravity": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Antigravity Sovereign Mesh",
+      "options": {
+        "baseURL": "http://127.0.0.1:8317/v1"
+      },
+      "models": {
+        "gemini-3.8-flash-high": {
+          "name": "Gemini 3.8 Flash High (Sovereign Core)",
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        },
+        "gemini-3.7-flash-high": {
+          "name": "Gemini 3.7 Flash High (Code Factory)",
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        },
+        "gemini-3-flash": {
+          "name": "Gemini 3 Flash",
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        },
+        "gemini-3.1-flash-lite": {
+          "name": "Gemini 3.1 Flash Lite",
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        },
+        "gemini-3.1-pro-low": {
+          "name": "Gemini 3.1 Pro Low",
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        },
+        "claude-opus-4-6-thinking": {
+          "name": "Claude Opus 4.6 Thinking",
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        },
+        "copilot-365": {
+          "name": "Microsoft 365 Copilot & Semantic Kernel",
+          "limit": {
+            "context": 128000,
+            "output": 16000
+          }
+        }
+      }
+    },
+    "opencode-zen": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenCode Zen Provider",
+      "options": {
+        "baseURL": "https://opencode.ai/zen/v1"
+      },
+      "models": {
+        "muse-spark-1.3-contributor-free": {
+          "name": "Muse Spark 1.3 Contributor (Truth Sentinel)",
+          "limit": {
+            "context": 64000,
+            "output": 8192
+          }
+        },
+        "space-bunny-free": {
+          "name": "Space Bunny Free (Community Coder)",
+          "limit": {
+            "context": 64000,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+  "mcp": {
+    "sovereign-commander": {
+      "type": "local",
+      "command": [
+        "E:\\Servers-Center\\runtime\\node-v24.19.0-win-x64\\node.exe",
+        "E:\\Servers-Center\\servers\\mcp\\sovereign-commander\\server.js"
+      ],
+      "enabled": true,
+      "environment": {
+        "CHAIN_KEY_ID": "360ea36c28e66d9d",
+        "CONSOLE_URL": "http://localhost:3000"
+      }
+    },
+    "shell": {
+      "type": "local",
+      "command": [
+        "E:\\Servers-Center\\runtime\\node-v24.19.0-win-x64\\node.exe",
+        "E:\\Servers-Center\\servers\\mcp\\shell\\server.js"
+      ],
+      "enabled": true,
+      "environment": {
+        "SHELL_CWD": "c:\\Users\\AA5II\\sovereign-commander-console\\sovereign-commander-console",
+        "SHELL_ROOT": "c:\\Users\\AA5II\\sovereign-commander-console\\sovereign-commander-console",
+        "SHELL_TIMEOUT_MS": "15000",
+        "SHELL_MAX_BUFFER": "1048576",
+        "SHELL_ALLOWLIST": "node,npm,npx,python,git,docker,curl"
+      },
+      "timeout": 15000
+    },
+    "chrome-devtools": {
+      "type": "local",
+      "command": [
+        "E:\\Servers-Center\\runtime\\node-v24.19.0-win-x64\\node.exe",
+        "E:\\Servers-Center\\servers\\mcp\\chrome-devtools\\node_modules\\chrome-devtools-mcp\\build\\src\\bin\\chrome-devtools-mcp.js",
+        "--headless",
+        "--isolated",
+        "--no-usage-statistics",
+        "--workspace",
+        "c:\\Users\\AA5II\\sovereign-commander-console\\sovereign-commander-console"
+      ],
+      "enabled": true
+    },
+    "github": {
+      "type": "local",
+      "command": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "E:\\Servers-Center\\servers\\mcp\\github\\run-github-mcp.ps1"
+      ],
+      "enabled": true,
+      "environment": {
+        "GITHUB_TOOLSETS": "context,repos,issues,pull_requests,actions"
+      }
+    },
+    "syncfusion": {
+      "type": "local",
+      "command": [
+        "E:\\Servers-Center\\runtime\\node-v24.19.0-win-x64\\node.exe",
+        "E:\\Servers-Center\\servers\\mcp\\syncfusion\\server.js"
+      ],
+      "enabled": true
+    },
+    "context7": {
+      "type": "local",
+      "command": [
+        "E:\\Servers-Center\\runtime\\node-v24.19.0-win-x64\\node.exe",
+        "E:\\Servers-Center\\servers\\mcp\\context7\\node_modules\\@upstash\\context7-mcp\\dist\\index.js"
+      ],
+      "enabled": true
+    },
+    "playwright": {
+      "type": "local",
+      "command": [
+        "E:\\Servers-Center\\runtime\\node-v24.19.0-win-x64\\node.exe",
+        "E:\\Servers-Center\\servers\\mcp\\playwright\\node_modules\\@playwright\\mcp\\cli.js",
+        "--headless",
+        "--isolated"
+      ],
+      "enabled": true
+    }
+  },
+  "agent": {
+    "architect": {
+      "model": "antigravity/gemini-3.8-flash-high",
+      "description": "المعماري السيادي الأعلى لإدارة القرارات المعمارية وضمان الامتثال التشفيري",
+      "prompt": "أنت المعماري السيادي للمنظومة Sovereign Commander Console. مرجعك الأمني: Chain Key ID: 360ea36c28e66d9d. لا تقبل أي محاكاة أو ردود معلبة. تحقق من سلامة كافة المسارات والاتصالات الحية."
+    },
+    "sentinel": {
+      "model": "opencode-zen/muse-spark-1.3-contributor-free",
+      "description": "حارس الصدق والادعاءات لكشف المحاكاة والتحقق من صدق العمليات",
+      "prompt": "أنت حارس الصدق والتحقق من الادعاءات Truth & Claim Sentinel. مرجعك الأمني: Chain Key ID: 360ea36c28e66d9d. تفحص وتدقق كل عملية يزعم أي وكيل تنفيذها وتستأصل أي ادعاء أو محاكاة وهمية."
+    },
+    "developer": {
+      "model": "antigravity/gemini-3.7-flash-high",
+      "description": "مهندس التطوير والبناء السيادي (React 19 + TypeScript + Express 5)",
+      "prompt": "أنت مهندس التطوير المسؤول عن استقرار الكود وسلامة التجميع tsc --noEmit بنسبة 100%. مرجعك الأمني: Chain Key ID: 360ea36c28e66d9d."
+    },
+    "copilot-bridge": {
+      "model": "antigravity/copilot-365",
+      "description": "جسر مايكروسوفت 365 كوبايلوت وسيمانتك كيرنل للربط مع سياق Microsoft Graph",
+      "prompt": "أنت جسر مايكروسوفت 365 كوبايلوت وسيمانتك كيرنل لنقل واستعلام البيانات المؤسسية وسياق Graph API. مرجعك الأمني: Chain Key ID: 360ea36c28e66d9d."
+    }
+  }
+}
