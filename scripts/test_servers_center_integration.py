@@ -17,7 +17,9 @@ if sys.platform == 'win32':
         pass
 
 CHAIN_KEY_ID = "360ea36c28e66d9d"
-CENTER_ROOT = r"E:\Servers-Center"
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CANONICAL_MANIFEST = os.path.join(ROOT_DIR, "config", "servers_center_manifest.json")
+CENTER_ROOT = os.environ.get("SERVERS_CENTER_PATH", r"E:\Servers-Center")
 PORTABLE_NODE = os.path.join(CENTER_ROOT, "runtime", "node-v24.19.0-win-x64", "node.exe")
 
 def test_manifest_and_mcp_servers():
@@ -26,6 +28,8 @@ def test_manifest_and_mcp_servers():
     print("=" * 80)
 
     manifest_path = os.path.join(CENTER_ROOT, "manifest.json")
+    if not os.path.exists(manifest_path):
+        manifest_path = CANONICAL_MANIFEST
     if not os.path.exists(manifest_path):
         print(f"  [FAIL] Missing manifest.json at {manifest_path}")
         return False
@@ -62,6 +66,12 @@ def test_lsp_servers():
     print("=" * 80)
 
     manifest_path = os.path.join(CENTER_ROOT, "manifest.json")
+    if not os.path.exists(manifest_path):
+        manifest_path = CANONICAL_MANIFEST
+    if not os.path.exists(manifest_path):
+        print(f"  [FAIL] Missing manifest.json at {manifest_path}")
+        return False
+
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
@@ -159,8 +169,9 @@ console.log(JSON.stringify(result));
         f.write(test_ts)
 
     try:
+        cmd = f'npx tsx "{runner_file}"'
         proc = subprocess.run(
-            ["npx", "tsx", runner_file],
+            cmd,
             capture_output=True,
             text=True,
             check=True,

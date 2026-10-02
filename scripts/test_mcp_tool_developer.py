@@ -131,8 +131,9 @@ def test_live_jsonrpc_execution():
         return False
 
     try:
+        cmd = f'npx tsx "{runner_path}"'
         proc = subprocess.run(
-            ["npx", "tsx", runner_path],
+            cmd,
             capture_output=True,
             text=True,
             check=True,

@@ -1,0 +1,22 @@
+{
+  "runtime": {
+    "node_version": "v24.19.0"
+  },
+  "mcp": {
+    "shell": { "entry": "servers/mcp/shell/server.js", "version": "1.0.0", "tools": ["shell"] },
+    "chrome-devtools": { "entry": "servers/mcp/chrome-devtools/server.js", "version": "1.0.0", "tools": ["chrome-devtools"] },
+    "github": { "entry": "servers/mcp/github/server.js", "version": "1.0.0", "tools": ["github"] },
+    "syncfusion": { "entry": "servers/mcp/syncfusion/server.js", "version": "1.0.0", "tools": ["syncfusion"] },
+    "context7": { "entry": "servers/mcp/context7/server.js", "version": "1.0.0", "tools": ["context7"] },
+    "playwright": { "entry": "servers/mcp/playwright/server.js", "version": "1.0.0", "tools": ["playwright"] },
+    "sovereign-commander": { "entry": "servers/mcp/sovereign-commander/server.js", "version": "1.0.0", "tools": ["sovereign-commander"] }
+  },
+  "lsp": {
+    "typescript": { "entry": "servers/lsp/typescript", "version": "5.4.0", "source": "npm" },
+    "eslint": { "entry": "servers/lsp/eslint", "version": "8.57.0", "source": "npm" },
+    "bash": { "entry": "servers/lsp/bash", "version": "1.14.0", "source": "npm" },
+    "yaml": { "entry": "servers/lsp/yaml", "version": "1.15.0", "source": "npm" },
+    "pyright": { "entry": "servers/lsp/pyright", "version": "1.1.350", "source": "npm" },
+    "dotnet": { "entry": "servers/lsp/dotnet", "version": "8.0.0", "source": "dotnet" }
+  }
+}
