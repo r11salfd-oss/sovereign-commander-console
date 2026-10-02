@@ -263,6 +263,15 @@ export default function ChatChamberPage() {
       icon: ShieldCheck, 
       color: 'text-amber-400', 
       desc: 'محقق صدق العمليات والادعاءات (OpenCode Zen Muse 1.3): فحص مزاعم الوكلاء وكشف النصوص التخيلية' 
+    },
+    { 
+      id: 'copilot-bridge', 
+      name: 'M365 Copilot Bridge', 
+      role: 'copilot', 
+      model: 'copilot-365', 
+      icon: Bot, 
+      color: 'text-sky-400', 
+      desc: 'جسر مايكروسوفت 365 كوبايلوت وسيمانتك كيرنل: معالجة واستعلام البيانات المؤسسية وسياق Microsoft Graph' 
     }
   ];
 

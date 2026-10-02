@@ -10,23 +10,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       if (savedLocal) {
         return JSON.parse(savedLocal) as User;
       }
-      if (typeof window !== 'undefined') {
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('mode') === 'local' || params.get('commander') === 'true' || params.get('bypass') === 'true') {
-          const autoUser: any = {
-            uid: 'sovereign-commander-local-root',
-            email: 'r11salfd@gmail.com',
-            displayName: 'Sovereign Commander (Local Admin)',
-            emailVerified: true,
-            isAnonymous: false,
-            isLocalCommander: true,
-            getIdToken: async () => 'mock-sovereign-token',
-          };
-          localStorage.setItem('sovereign_local_commander', JSON.stringify(autoUser));
-          sessionStorage.setItem('sovereign_local_commander', JSON.stringify(autoUser));
-          return autoUser as User;
-        }
-      }
     } catch (e) {}
     return null;
   });
@@ -55,23 +38,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, [user]);
 
-  const handleLocalBypass = () => {
-    const mockUser: any = {
-      uid: 'sovereign-commander-local-root',
-      email: 'r11salfd@gmail.com',
-      displayName: 'Sovereign Commander (Local Admin)',
-      emailVerified: true,
-      isAnonymous: false,
-      isLocalCommander: true,
-      getIdToken: async () => 'mock-sovereign-token',
-    };
-    localStorage.setItem('sovereign_local_commander', JSON.stringify(mockUser));
-    sessionStorage.setItem('sovereign_local_commander', JSON.stringify(mockUser));
-    localStorage.setItem('google_user_email', 'r11salfd@gmail.com');
-    sessionStorage.setItem('google_user_email', 'r11salfd@gmail.com');
-    setUser(mockUser);
-    setLoading(false);
-  };
+
 
   const handleLogin = async () => {
     setAuthInProgress(true);
@@ -92,10 +59,9 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Auto-fallback if Firebase rejects localhost OAuth domain
       if (err?.code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
-        console.warn('Firebase OAuth unauthorized domain detected on localhost. Auto-engaging Sovereign Local Commander session.');
-        handleLocalBypass();
+        console.error('Firebase OAuth unauthorized domain detected. You must use an authorized domain or configure localhost in Firebase Console.');
+        setAuthError('Unauthorized domain for Firebase Auth. Configure it in Firebase Console.');
         return;
       }
       setAuthError(msg);
@@ -114,8 +80,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) {
-    const isLocalhost = typeof window !== 'undefined' && 
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
     return (
       <div className="min-h-screen bg-[#07090e] flex flex-col items-center justify-center p-4 text-slate-300 font-mono">
@@ -137,7 +101,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
                 <div className="text-[11px] text-rose-200/90 font-mono">{authError}</div>
                 {authError.includes('unauthorized-domain') && (
                   <div className="mt-2 text-[10px] text-amber-300 border-t border-rose-800/40 pt-1.5 font-sans">
-                    💡 Firebase restricts OAuth popups on local domains. Use Local Commander mode below to enter immediately.
+                    💡 Configure authorized domains in Firebase Console (Authentication &gt; Settings &gt; Authorized domains).
                   </div>
                 )}
               </div>
@@ -163,16 +127,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
               )}
             </button>
 
-            {(isLocalhost || authError) && (
-              <button
-                onClick={handleLocalBypass}
-                type="button"
-                className="w-full bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-600/60 text-emerald-400 px-5 py-2.5 rounded-lg font-mono text-xs tracking-wider uppercase transition flex items-center justify-center gap-2 font-medium"
-              >
-                <Terminal className="w-4 h-4 text-emerald-400" />
-                <span>Enter in Local Commander Mode</span>
-              </button>
-            )}
+
           </div>
 
           <p className="mt-6 text-[10px] text-slate-500 font-mono">

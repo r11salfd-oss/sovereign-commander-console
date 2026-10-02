@@ -64,7 +64,7 @@ export default function ForgePage() {
         setGeneratedCode(data.code);
         setLspResult(data.lspValidation || null);
         setSynthesisMeta({
-          provider: data.provider || (model.startsWith('opencode') ? 'OpenCode Zen' : 'Google AI Pro'),
+          provider: data.provider || (model.startsWith('opencode') ? 'OpenCode Zen' : model.startsWith('copilot') ? 'Microsoft 365 Copilot' : 'Google AI Pro'),
           model: data.model || model,
           timestamp: data.timestamp || new Date().toISOString()
         });
@@ -208,14 +208,14 @@ export default function ForgePage() {
               <div>
                 <label className="block text-[11px] font-mono text-slate-400 uppercase mb-1 flex items-center justify-between">
                   <span>Synthesis Engine & Model</span>
-                  <span className="text-[10px] text-amber-400/80">OpenCode Zen + Google AI Pro</span>
+                  <span className="text-[10px] text-amber-400/80">Gemini + Antigravity + OpenCode + Copilot 365</span>
                 </label>
                 <select
                   value={model}
                   onChange={e => setModel(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-xs text-amber-300 font-mono focus:outline-none focus:border-amber-500"
                 >
-                  <optgroup label="🌟 Google AI Pro & Antigravity (Account r11salfd)">
+                  <optgroup label="🌟 Google Gemini & Antigravity (Account r11salfd)">
                     <option value="gemini-3.7-flash">gemini-3.7-flash (Google AI Pro Code Factory)</option>
                     <option value="gemini-3.8-flash">gemini-3.8-flash (Google AI Pro Low Latency)</option>
                     <option value="antigravity-preview-09-2026">antigravity-preview-09-2026 (Antigravity Core Pro)</option>
@@ -223,6 +223,9 @@ export default function ForgePage() {
                   <optgroup label="⚡ OpenCode Zen Agents (opencode.ai/zen)">
                     <option value="opencode/muse-spark-1.3-contributor-free">opencode/muse-spark-1.3-contributor-free (Muse 1.3 Contributor)</option>
                     <option value="opencode/space-bunny-free">opencode/space-bunny-free (Zen Community Coder)</option>
+                  </optgroup>
+                  <optgroup label="🌐 Microsoft 365 Copilot & Semantic Kernel">
+                    <option value="copilot-365">copilot-365 (M365 Copilot & Microsoft Graph)</option>
                   </optgroup>
                 </select>
               </div>

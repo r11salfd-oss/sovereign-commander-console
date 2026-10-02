@@ -142,99 +142,7 @@ def test_mathematical_models():
 
     return True
 
-def test_coala_memory_simulation():
-    print("\n" + "=" * 80)
-    print(" SUITE 3: CoALA SIMULATION & AGENT RUNTIME RETRIEVAL")
-    print("=" * 80)
 
-    # In-memory mock simulation matching SovereignAgentMemoryEngine logic
-    semantic_store = {}
-    episodic_store = []
-    procedural_store = {}
-    working_memory = {
-        "sessionId": "ses_alpha_99",
-        "shortTermBuffer": [],
-        "tokenBudget": 100,
-        "currentEstimatedTokens": 0
-    }
-
-    # 1. Semantic Memory Operation
-    semantic_store["commander_profile::default"] = {
-        "title": "Supreme Commander",
-        "language": "Arabic",
-        "clearance": "LEVEL_5_SOVEREIGN"
-    }
-    assert "commander_profile::default" in semantic_store
-    print("  [OK] Semantic Memory: Commander profile registered with LEVEL_5_SOVEREIGN")
-
-    # 2. Episodic Memory Operation
-    episodic_store.append({
-        "id": "epi_1",
-        "timestamp": time.time() * 1000 - (10 * 3600 * 1000), # 10h ago
-        "summary": "Critical microkernel memory leak detected and resolved",
-        "outcome": "success",
-        "keyInsights": ["Leak caused by unclosed WebSocket channel", "Garbage collection restored heap balance"],
-        "importanceScore": 9,
-        "tags": ["memory_leak", "websocket", "recovery"]
-    })
-    episodic_store.append({
-        "id": "epi_2",
-        "timestamp": time.time() * 1000 - (120 * 3600 * 1000), # 120h ago
-        "summary": "Routine health check executed with normal status",
-        "outcome": "success",
-        "keyInsights": ["All services operating within latency limits"],
-        "importanceScore": 3,
-        "tags": ["routine", "health_check"]
-    })
-
-    # Query Episodic Memory for "memory leak in channel"
-    query = "memory leak in channel"
-    scored = []
-    for epi in episodic_store:
-        text = f"{epi['summary']} {' '.join(epi['keyInsights'])} {' '.join(epi['tags'])}"
-        sim = compute_keyword_similarity(query, text)
-        decay = calculate_recency_decay(epi['timestamp'], half_life_hours=72)
-        score = (sim * 0.5) + (decay * 0.3) + ((epi['importanceScore'] / 10) * 0.2)
-        scored.append((epi['id'], score))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-    assert scored[0][0] == "epi_1", "Episodic retrieval should rank incident epi_1 highest"
-    print(f"  [OK] Episodic Memory: Priority retrieval selected incident epi_1 (Score: {scored[0][1]:.4f}) over epi_2 ({scored[1][1]:.4f})")
-
-    # 3. Procedural Memory Operation
-    procedural_store["hitl_destructive_action"] = {
-        "taskType": "hitl_destructive_action",
-        "triggerCondition": "User or agent attempts destructive change",
-        "steps": ["Intercept operation", "Lodge approval block", "Require cryptographic sign-off"],
-        "successCount": 18,
-        "failureCount": 2
-    }
-    proc_skill = procedural_store["hitl_destructive_action"]
-    success_ratio = proc_skill["successCount"] / (proc_skill["successCount"] + proc_skill["failureCount"])
-    assert success_ratio == 0.9, f"Expected 0.9 success ratio, got {success_ratio}"
-    print(f"  [OK] Procedural Memory: Skill 'hitl_destructive_action' validated with 90.0% operational success ratio")
-
-    # 4. Working Memory Token Pruning Simulation
-    sample_turns = [
-        ("user", "Hello agent, initiate status check on sovereign microkernel."),
-        ("agent", "Initiating telemetry probe across microkernel nodes."),
-        ("user", "Ensure strict HITL guardrails remain active."),
-        ("agent", "Confirmed. HITL isolation protocol locked."),
-        ("user", "Deploy secondary observer agent for continuous audit.")
-    ]
-
-    for role, text in sample_turns:
-        est_tokens = math.ceil(len(text) / 3.5)
-        working_memory["shortTermBuffer"].append({"role": role, "text": text})
-        working_memory["currentEstimatedTokens"] += est_tokens
-        while working_memory["currentEstimatedTokens"] > working_memory["tokenBudget"] and len(working_memory["shortTermBuffer"]) > 2:
-            removed = working_memory["shortTermBuffer"].pop(0)
-            working_memory["currentEstimatedTokens"] -= math.ceil(len(removed["text"]) / 3.5)
-
-    assert working_memory["currentEstimatedTokens"] <= working_memory["tokenBudget"] or len(working_memory["shortTermBuffer"]) == 2
-    print(f"  [OK] Working Memory: FIFO buffer auto-pruning enforced. Active entries: {len(working_memory['shortTermBuffer'])}, Tokens: {working_memory['currentEstimatedTokens']}/{working_memory['tokenBudget']}")
-
-    return True
 
 def main():
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -249,9 +157,8 @@ def main():
 
     suite1_pass = test_engine_codebase_integrity(engine_path)
     suite2_pass = test_mathematical_models()
-    suite3_pass = test_coala_memory_simulation()
 
-    all_passed = suite1_pass and suite2_pass and suite3_pass
+    all_passed = suite1_pass and suite2_pass
 
     print("\n" + "=" * 80)
     if all_passed:

@@ -11,6 +11,7 @@ Chain Key ID: 360ea36c28e66d9d
 
 ## Purpose
 This skill equips the Antigravity agent with the necessary runbooks and scripts to execute complete sovereign workspace audits, verify compilation integrity, and guarantee strict conformance to the Sovereign Governance Engine standards.
+It also absolutely enforces the Anti-Simulation & Anti-Fabrication Mandate: NO mock data, NO canned responses, and NO fake tests.
 
 ## Execution Runbook
 1. Run the workspace verification script:
@@ -20,3 +21,4 @@ This skill equips the Antigravity agent with the necessary runbooks and scripts 
 3. Check Git branch status and staged files:
    `git status --short`
 4. If committing, include Chain Key ID `360ea36c28e66d9d` in the commit message.
+5. ENSURE NO CANNED RESPONSES OR MOCKS EXIST IN THE OPERATION. IF FOUND, ERADICATE IMMEDIATELY.

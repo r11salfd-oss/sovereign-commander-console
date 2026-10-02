@@ -307,6 +307,7 @@ export default function AgentsPage() {
                     <option value="opencode/space-bunny-free">opencode/space-bunny-free (OpenCode Zen Gateway)</option>
                     <option value="antigravity-preview-09-2026">antigravity-preview-09-2026 (Remote Sandbox)</option>
                     <option value="deep-research-preview-04-2026">deep-research-preview-04-2026 (Research Core)</option>
+                    <option value="copilot-365">copilot-365 (Microsoft 365 Copilot & Semantic Kernel)</option>
                   </select>
                 </div>
 

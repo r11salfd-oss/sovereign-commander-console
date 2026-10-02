@@ -11,7 +11,8 @@ import {
   Flame,
   Layers,
   Terminal,
-  ShieldCheck
+  ShieldCheck,
+  Bot
 } from 'lucide-react';
 
 export interface ModelOption {
@@ -127,6 +128,17 @@ export const AVAILABLE_MODELS: ModelOption[] = [
     descriptionAr: 'بوابة OpenCode Zen الخارجية للاستدلال السريع والأكواد المفتوحة (opencode.ai/zen).',
     descriptionEn: 'OpenCode Zen autonomous gateway model for open programming workflows.',
     icon: Terminal
+  },
+  {
+    id: 'copilot-365',
+    name: 'copilot-365',
+    badge: 'M365 Copilot & Kernel',
+    badgeColor: 'bg-sky-950/80 text-sky-300 border-sky-500/60',
+    borderColor: 'border-sky-500/70 shadow-[0_0_12px_rgba(14,165,233,0.25)]',
+    specialty: 'Microsoft 365 Copilot & Semantic Kernel',
+    descriptionAr: 'نموذج مايكروسوفت 365 كوبايلوت وسيمانتك كيرنل: معالجة واستعلام البيانات السيادية وسياق Microsoft Graph المؤسسي.',
+    descriptionEn: 'Microsoft 365 Copilot & Semantic Kernel bridge engine for enterprise Graph data synchronization and agentic workflows.',
+    icon: Bot
   }
 ];
 
