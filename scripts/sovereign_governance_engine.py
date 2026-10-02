@@ -155,12 +155,13 @@ class SovereignClient:
                     healthy=True,
                 )
             case (200, "UNVERIFIED") if entry_count == 0 and broken_at is None:
-                # Empty ledger = genesis state — no entries, no tampering detected
+                # Empty ledger — genesis state, but absence of evidence ≠ health.
+                # Cannot verify integrity of what does not exist yet.
                 return SubsystemReport(
                     name="Sovereign Audit Chain",
-                    status="EMPTY_LEDGER_HEALTHY",
-                    details="Ledger in genesis state (0 entries, brokenAt=null) — no tampering detected",
-                    healthy=True,
+                    status="EMPTY_LEDGER_UNVERIFIABLE",
+                    details="Ledger in genesis state (0 entries, brokenAt=null) — cannot verify; awaiting first sealed entry",
+                    healthy=False,
                 )
             case _:
                 return SubsystemReport(
@@ -171,22 +172,42 @@ class SovereignClient:
                 )
 
     async def probe_mcp_protocol(self) -> SubsystemReport:
-        status, data = await self._async_http_call("/api/mcp/status")
-        mcp_status = data.get("status")
-        match (status, mcp_status):
-            case (200, "active"):
-                servers = data.get("servers", [])
+        # Read from /api/agents/framework — HOST_PROBER_MEASURED data (7/7 real)
+        # /api/mcp/status returns servers:[] (static registry, not live probe)
+        status, data = await self._async_http_call("/api/agents/framework")
+        if status != 200 or not data.get("ok"):
+            return SubsystemReport(
+                name="Model Context Protocol (MCP)",
+                status="UNREACHABLE",
+                details=f"HTTP {status} from /api/agents/framework",
+                healthy=False,
+            )
+        mcp = data.get("mcp", {})
+        online: int = mcp.get("online", 0)
+        total: int = mcp.get("total", 0)
+        source: str = mcp.get("measurementSource", "UNKNOWN")
+        servers_list = mcp.get("servers", [])
+        server_ids = [s.get("id", "?") for s in servers_list if isinstance(s, dict)]
+        match (online, total):
+            case (n, t) if n > 0 and n == t:
                 return SubsystemReport(
                     name="Model Context Protocol (MCP)",
                     status="ACTIVE",
-                    details=f"Active Servers: {servers}",
+                    details=f"{online}/{total} ONLINE | source: {source} | ids: {server_ids}",
                     healthy=True,
+                )
+            case (0, _):
+                return SubsystemReport(
+                    name="Model Context Protocol (MCP)",
+                    status="OFFLINE",
+                    details=f"0/{total} ONLINE | source: {source}",
+                    healthy=False,
                 )
             case _:
                 return SubsystemReport(
                     name="Model Context Protocol (MCP)",
-                    status=str(mcp_status).upper(),
-                    details=f"MCP Subsystem status: {mcp_status}",
+                    status="DEGRADED",
+                    details=f"{online}/{total} ONLINE | source: {source}",
                     healthy=False,
                 )
 
@@ -288,10 +309,11 @@ async def main() -> int:
     print("=" * 68)
 
     if result.is_success:
-        print("\n✨ All sovereign systems, audit chains, and bridges are 100% OPERATIONAL.")
+        print("\n✅ All probed subsystems PASSED. Score reflects measured state — not declared.")
         return 0
     else:
-        print(f"\n⚠️ Verification failed with {result.failed_checks} errors.")
+        failed_names = [r.name for r in result.subsystems if not r.healthy]
+        print(f"\n⚠️  {result.failed_checks} subsystem(s) did not pass: {failed_names}")
         return 1
 
 
