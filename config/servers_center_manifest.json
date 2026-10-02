@@ -1,22 +1,305 @@
 {
+  "manifest_version": "2.0.0",
+  "chain_key_id": "360ea36c28e66d9d",
+  "last_reconciled": "2026-10-02",
+  "reconciled_against": [
+    "E:\\Servers-Center\\manifest.json (host manifest, read-only)",
+    "opencode.json (actually-working launch configuration)",
+    "on-disk evidence under E:\\Servers-Center (file existence, package.json versions, executed version flags)"
+  ],
+  "provenance": {
+    "handshakesExecuted": 0,
+    "handshakeOutcomeRecorded": "NOT_EXECUTED_BY_THIS_MANIFEST",
+    "note": "This document records INVENTORY and LAUNCH FEASIBILITY only. No MCP `initialize`/`tools/list` handshake and no LSP `initialize` was executed while producing it, therefore no per-entry reachability verdict is recorded anywhere in this file. Reachability is measured by the host-side probers (scripts/host_prober.ts, scripts/lsp_prober.ts) and nowhere else. scripts/validate_servers_manifest.ts validates structure and cross-document consistency; it measures presence, never reachability."
+  },
+  "root": {
+    "default": "E:\\Servers-Center",
+    "env_override": "SERVERS_CENTER_ROOT",
+    "legacy_env_override": "SERVERS_CENTER_PATH",
+    "resolution_precedence": ["SERVERS_CENTER_ROOT", "SERVERS_CENTER_PATH", "default"]
+  },
   "runtime": {
-    "node_version": "v24.19.0"
+    "node": "runtime/node-v24.19.0-win-x64/node.exe",
+    "node_version": "v24.19.0",
+    "node_version_source": "EXECUTED_VERSION_FLAG",
+    "note": "`node_version` was printed by running the declared binary itself. Relative paths are resolved against `root`."
   },
   "mcp": {
-    "shell": { "entry": "servers/mcp/shell/server.js", "version": "1.0.0", "tools": ["shell"] },
-    "chrome-devtools": { "entry": "servers/mcp/chrome-devtools/server.js", "version": "1.0.0", "tools": ["chrome-devtools"] },
-    "github": { "entry": "servers/mcp/github/server.js", "version": "1.0.0", "tools": ["github"] },
-    "syncfusion": { "entry": "servers/mcp/syncfusion/server.js", "version": "1.0.0", "tools": ["syncfusion"] },
-    "context7": { "entry": "servers/mcp/context7/server.js", "version": "1.0.0", "tools": ["context7"] },
-    "playwright": { "entry": "servers/mcp/playwright/server.js", "version": "1.0.0", "tools": ["playwright"] },
-    "sovereign-commander": { "entry": "servers/mcp/sovereign-commander/server.js", "version": "1.0.0", "tools": ["sovereign-commander"] }
+    "shell": {
+      "version": "3.0.0",
+      "version_source": "EMBEDDED_IN_SERVER_SOURCE",
+      "entry": "servers/mcp/shell/server.js",
+      "args": [],
+      "tools": ["run_shell_command"],
+      "tools_status": "DECLARED_BY_HOST_MANIFEST",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "stdio",
+        "argvShape": ["interpreter", "entry", "...args"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "BLOCKED_PLATFORM",
+      "handshakeBlockers": ["Declared interpreter is a Windows .exe on E:\\Servers-Center; the Alpine container has no Windows runtime and no PowerShell."]
+    },
+    "chrome-devtools": {
+      "version": "1.9.0",
+      "version_source": "PACKAGE_JSON_ON_DISK",
+      "entry": "servers/mcp/chrome-devtools/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js",
+      "args": ["--headless", "--isolated", "--no-usage-statistics", "--workspace", "c:\\Users\\AA5II\\sovereign-commander-console\\sovereign-commander-console"],
+      "tools_status": "UNDECLARED_IN_EVIDENCE",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "stdio",
+        "argvShape": ["interpreter", "entry", "...args"],
+        "nonRunnablePlatforms": ["linux", "darwin"],
+        "argsDivergence": "The host manifest declares `--workspace E:\\matrex-dev`; the console drives this server against its own workspace, so the opencode.json value is authoritative here."
+      },
+      "handshakeFeasibility": "BLOCKED_PLATFORM",
+      "handshakeBlockers": ["Declared interpreter is a Windows .exe on E:\\Servers-Center; the Alpine container has no Windows runtime."]
+    },
+    "github": {
+      "version": "1.12.2",
+      "version_source": "EXECUTED_VERSION_FLAG",
+      "entry": "servers/mcp/github/github-mcp-server.exe",
+      "args": ["stdio"],
+      "tools_status": "UNDECLARED_IN_EVIDENCE",
+      "command": {
+        "executable": "servers/mcp/github/github-mcp-server.exe",
+        "executableKind": "windows-exe",
+        "interpreter": null,
+        "platform": "win32",
+        "transport": "stdio",
+        "argvShape": ["entry", "...args"],
+        "nonRunnablePlatforms": ["linux", "darwin"],
+        "powershellWrapper": "servers/mcp/github/run-github-mcp.ps1",
+        "powershellWrapperNote": "opencode.json launches this server via `powershell -NoProfile -ExecutionPolicy Bypass -File run-github-mcp.ps1`, and the host manifest names the same wrapper. That wrapper forwards to `github-mcp-server.exe stdio`, so the direct native launch recorded here is equivalent, requires no PowerShell, and is the form scripts/host_prober.ts measures. `entry` therefore points at the EXE, never at the .ps1."
+      },
+      "requiresEnvironment": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+      "handshakeFeasibility": "BLOCKED_PLATFORM",
+      "handshakeBlockers": [
+        "Windows PE executable; cannot execute inside the Alpine container.",
+        "Requires GITHUB_PERSONAL_ACCESS_TOKEN in the child environment; its value is never recorded in this repository."
+      ]
+    },
+    "syncfusion": {
+      "version": "2.0.0",
+      "version_source": "EMBEDDED_IN_SERVER_SOURCE",
+      "entry": "servers/mcp/syncfusion/server.js",
+      "args": [],
+      "tools": ["generate_react_datagrid"],
+      "tools_status": "DECLARED_BY_HOST_MANIFEST",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "stdio",
+        "argvShape": ["interpreter", "entry", "...args"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "BLOCKED_PLATFORM",
+      "handshakeBlockers": ["Declared interpreter is a Windows .exe on E:\\Servers-Center; the Alpine container has no Windows runtime."]
+    },
+    "context7": {
+      "version": "4.1.1",
+      "version_source": "PACKAGE_JSON_ON_DISK",
+      "entry": "servers/mcp/context7/node_modules/@upstash/context7-mcp/dist/index.js",
+      "args": [],
+      "tools": ["resolve-library-id", "query-docs"],
+      "tools_status": "DECLARED_BY_HOST_MANIFEST",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "stdio",
+        "argvShape": ["interpreter", "entry", "...args"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "BLOCKED_PLATFORM",
+      "handshakeBlockers": ["Declared interpreter is a Windows .exe on E:\\Servers-Center; the Alpine container has no Windows runtime."]
+    },
+    "playwright": {
+      "version": "0.0.82",
+      "version_source": "PACKAGE_JSON_ON_DISK",
+      "entry": "servers/mcp/playwright/node_modules/@playwright/mcp/cli.js",
+      "args": ["--headless", "--isolated"],
+      "tools_status": "UNDECLARED_IN_EVIDENCE",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "stdio",
+        "argvShape": ["interpreter", "entry", "...args"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "BLOCKED_PLATFORM",
+      "handshakeBlockers": ["Declared interpreter is a Windows .exe on E:\\Servers-Center; the Alpine container has no Windows runtime."]
+    },
+    "sovereign-commander": {
+      "version": "2.4.0",
+      "version_source": "EMBEDDED_IN_SERVER_SOURCE",
+      "entry": "servers/mcp/sovereign-commander/server.js",
+      "args": [],
+      "tools": ["sovereign_verify_chain", "sovereign_kernel_query", "sovereign_memory_recall", "sovereign_hitl_propose"],
+      "tools_status": "DECLARED_BY_HOST_MANIFEST",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "stdio",
+        "argvShape": ["interpreter", "entry", "...args"],
+        "nonRunnablePlatforms": ["linux", "darwin"],
+        "environment": {
+          "CHAIN_KEY_ID": "360ea36c28e66d9d",
+          "CONSOLE_URL": "http://localhost:3000"
+        }
+      },
+      "handshakeFeasibility": "BLOCKED_PLATFORM",
+      "handshakeBlockers": ["Declared interpreter is a Windows .exe on E:\\Servers-Center; the Alpine container has no Windows runtime."]
+    }
   },
   "lsp": {
-    "typescript": { "entry": "servers/lsp/typescript", "version": "5.4.0", "source": "npm" },
-    "eslint": { "entry": "servers/lsp/eslint", "version": "8.57.0", "source": "npm" },
-    "bash": { "entry": "servers/lsp/bash", "version": "1.14.0", "source": "npm" },
-    "yaml": { "entry": "servers/lsp/yaml", "version": "1.15.0", "source": "npm" },
-    "pyright": { "entry": "servers/lsp/pyright", "version": "1.1.350", "source": "npm" },
-    "dotnet": { "entry": "servers/lsp/dotnet", "version": "8.0.0", "source": "dotnet" }
+    "typescript": {
+      "version": "5.9.3",
+      "version_source": "PACKAGE_JSON_ON_DISK",
+      "entry": "servers/lsp/typescript",
+      "entryKind": "directory",
+      "source": "npm",
+      "note": "The directory holds the TypeScript compiler package, NOT a language server. scripts/lsp_prober.ts resolves the launcher from <entry>/node_modules/<pkg>/package.json `bin`, then from PATH.",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "lsp-content-length",
+        "argvShape": ["interpreter", "<resolved launcher>", "...args"],
+        "launcherCandidates": ["typescript-language-server", "vscode-typescript-language-server"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "BLOCKED_NO_LAUNCHER",
+      "handshakeBlockers": [
+        "node_modules/typescript-language-server is not installed under servers/lsp/typescript.",
+        "Neither typescript-language-server nor vscode-typescript-language-server is on PATH.",
+        "The .bin directory contains only tsc and tsserver, which are a compiler CLI and a compiler daemon, not LSP servers."
+      ]
+    },
+    "eslint": {
+      "version": "10.11.0",
+      "version_source": "PACKAGE_JSON_ON_DISK",
+      "entry": "servers/lsp/eslint",
+      "entryKind": "directory",
+      "source": "npm",
+      "note": "The directory holds the ESLint package, NOT a language server. The launcher is resolved from <entry>/node_modules/<pkg>/package.json `bin`, then from PATH.",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "lsp-content-length",
+        "argvShape": ["interpreter", "<resolved launcher>", "...args"],
+        "launcherCandidates": ["eslint-language-server", "vscode-eslint-language-server"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "BLOCKED_NO_LAUNCHER",
+      "handshakeBlockers": [
+        "node_modules/eslint-language-server is not installed under servers/lsp/eslint.",
+        "Neither eslint-language-server nor vscode-eslint-language-server is on PATH.",
+        "The .bin directory contains only the eslint CLI, which speaks its own protocol and is not an LSP server."
+      ]
+    },
+    "bash": {
+      "version": "5.8.1",
+      "version_source": "PACKAGE_JSON_ON_DISK",
+      "entry": "servers/lsp/bash",
+      "entryKind": "directory",
+      "source": "npm",
+      "note": "node_modules/bash-language-server is present and owns the .bin/bash-language-server launcher, so the launcher IS resolvable from the declared entry.",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "lsp-content-length",
+        "argvShape": ["interpreter", "<resolved launcher>", "...args"],
+        "launcherCandidates": ["bash-language-server"],
+        "args": ["start"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "ELIGIBLE_NOT_EXECUTED",
+      "handshakeBlockers": []
+    },
+    "yaml": {
+      "version": "1.24.0",
+      "version_source": "PACKAGE_JSON_ON_DISK",
+      "entry": "servers/lsp/yaml",
+      "entryKind": "directory",
+      "source": "npm",
+      "note": "node_modules/yaml-language-server is present and owns the .bin/yaml-language-server launcher, so the launcher IS resolvable from the declared entry.",
+      "command": {
+        "executable": "runtime/node-v24.19.0-win-x64/node.exe",
+        "executableKind": "js-module",
+        "interpreter": "runtime/node-v24.19.0-win-x64/node.exe",
+        "platform": "win32",
+        "transport": "lsp-content-length",
+        "argvShape": ["interpreter", "<resolved launcher>", "...args"],
+        "launcherCandidates": ["yaml-language-server"],
+        "args": ["--stdio"],
+        "nonRunnablePlatforms": ["linux", "darwin"]
+      },
+      "handshakeFeasibility": "ELIGIBLE_NOT_EXECUTED",
+      "handshakeBlockers": []
+    },
+    "pyright": {
+      "version": "1.1.414",
+      "version_source": "EXECUTED_VERSION_FLAG",
+      "entryKind": "external-toolchain",
+      "source": "pip (system python)",
+      "note": "There is NO Servers Center asset for this server: E:\\Servers-Center\\servers\\lsp\\pyright does not exist, and the host manifest declares no entry for it either. `entry` is therefore deliberately OMITTED rather than invented. pyright-langserver.exe was located on the host PATH.",
+      "command": {
+        "executable": "pyright-langserver",
+        "executableKind": "external-toolchain",
+        "interpreter": null,
+        "platform": "any",
+        "transport": "lsp-content-length",
+        "argvShape": ["executable", "...args"],
+        "launcherCandidates": ["pyright-langserver"],
+        "args": ["--stdio"],
+        "nonRunnablePlatforms": []
+      },
+      "handshakeFeasibility": "ELIGIBLE_NOT_EXECUTED",
+      "handshakeBlockers": []
+    },
+    "dotnet": {
+      "version": "10.0.401",
+      "version_source": "EXECUTED_VERSION_FLAG",
+      "entryKind": "external-toolchain",
+      "source": "system .NET SDK",
+      "note": "There is NO Servers Center asset for this server: E:\\Servers-Center\\servers\\lsp\\dotnet does not exist, and the host manifest declares no entry for it either. `entry` is therefore deliberately OMITTED rather than invented. Only the .NET SDK is installed; no C# language server was found.",
+      "command": {
+        "executable": null,
+        "executableKind": "external-toolchain",
+        "interpreter": null,
+        "platform": "any",
+        "transport": "lsp-content-length",
+        "argvShape": ["executable", "...args"],
+        "launcherCandidates": ["omnisharp", "csharp-ls"],
+        "nonRunnablePlatforms": []
+      },
+      "handshakeFeasibility": "BLOCKED_NO_LAUNCHER",
+      "handshakeBlockers": [
+        "No C# language server launcher is installed: neither omnisharp nor csharp-ls is on PATH.",
+        "The .NET SDK is present but the SDK is a toolchain, not an LSP endpoint.",
+        "No Servers Center asset exists for this server, so the prober has nothing to spawn."
+      ]
+    }
   }
 }

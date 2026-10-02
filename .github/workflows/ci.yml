@@ -3,6 +3,37 @@
 # Authority: Supreme Sovereign Commander
 # Chain Key ID: 360ea36c28e66d9d
 # ==============================================================================
+#
+# ── GATE INTEGRITY NOTICE (Chain Key 360ea36c28e66d9d) ──────────────────────
+# This pipeline was hardened under the Sovereign Doctrine: "destroy the fake by
+# BUILDING the real thing, not by deleting the fake." Three gates here previously
+# LOOKED like they enforced security and enforced nothing. They are now real:
+#
+#   1. The supply-chain audit step read
+#          npm audit --audit-level=high || echo "⚠️ ... warnings"
+#      The `|| echo` swallowed the non-zero exit, so the gate ALWAYS passed while
+#      real high/critical advisories were printed into the log. It is now an
+#      enforced, baseline-backed gate (Gate 3) that exits non-zero.
+#
+#   2. Every action was pinned by a MUTABLE TAG. Tags can be re-pointed at new
+#      code by the upstream owner at any time; that is a supply-chain hole, not
+#      a version number. Every `uses:` is now pinned to a full 40-char commit
+#      SHA resolved via `git ls-remote`, with the human tag as a comment.
+#
+#   3. No `timeout-minutes` on the workflow, no least-privilege `permissions:`,
+#      no Node version matrix, and `concurrency.cancel-in-progress: true` meant a
+#      rapid second push silently cancelled an in-flight verification. All fixed.
+#
+# NOTE ON `on:` AND YAML 1.1 (classic parser trap):
+#   PyYAML / YAML 1.1 parse the bare key `on` as the BOOLEAN `True`
+#   (YAML 1.1 truthiness: on/off/yes/no are booleans). So `yaml.safe_load(...)`
+#   returns a dict whose trigger key is `True`, not `"on"`. That is a property of
+#   the PARSER, not of this file — GitHub's own parser treats `on:` correctly.
+#   Consequence for tooling: anything that reads these workflows with PyYAML must
+#   look up the trigger key as `data.get(True) or data.get("on")`. Do NOT "fix"
+#   this by quoting the key unless your validator demands it; the verification
+#   step below asserts the trigger set explicitly.
+# ==============================================================================
 
 name: Sovereign Quality Gates & CI Pipeline
 
@@ -13,35 +44,228 @@ on:
     branches: [ sovereign-main, main, master ]
   workflow_dispatch:
 
+# ── CONCURRENCY (hardened) ───────────────────────────────────────────────────
+# `cancel-in-progress: false` is a DELIBERATE change. Previously `true`, which
+# meant a push 1-2 minutes after the first SILENTLY KILLED the in-flight run.
+# Trade-off, stated plainly:
+#   * cancel-in-progress: true  -> saves runner minutes, fast feedback, BUT a
+#     green tick can be erased mid-verification and a bad push can be hidden
+#     behind a newer one; for a supply-chain gate this is unacceptable.
+#   * cancel-in-progress: false -> every push is verified to completion; costs
+#     more runner minutes and queues rapid pushes instead of dropping them.
+# The Commander may prefer cancel-on-push for `push` only (keeping full
+# verification for `pull_request`); that is a one-word change below if desired.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+# ── LEAST PRIVILEGE (hardened) ───────────────────────────────────────────────
+# Top-level default: the workflow only ever needs to READ the repository.
+# `contents: read` removes the default write-capable token scope from every job
+# that does not explicitly widen it. Jobs are narrow: container-verification
+# additionally needs `actions: write` for the GHA layer cache it uses.
+permissions:
+  contents: read
+
+# ==============================================================================
+# SUPPLY-CHAIN ADVISORY BASELINE (time-bounded, enforced by Gate 3)
+# ==============================================================================
+# This is NOT a suppression list that silences output. It is an ENFORCED DEBT
+# LEDGER. Gate 3 fails the build when ANY of these conditions is true:
+#   (a) a high/critical advisory appears that is NOT listed here  -> BLOCKED
+#   (b) a listed advisory is no longer reported by npm audit      -> BLOCKED
+#       (forces the ledger to SHRINK; a stale entry is itself a failure)
+#   (c) a listed advisory's `expires` date is in the past        -> BLOCKED
+#       (forces remediation on a clock; an entry cannot live forever)
+#   (d) npm audit fails/returns unparseable output                -> BLOCKED
+# Condition (b) and (c) are what make this a barrier rather than a rubber stamp.
+#
+# Each entry records the affected package, the reason it is still open, a named
+# owner, and an expiry date. `expires` is enforced, not decorative.
+#
+# KEY FACTS (measured 2026-10-02, npm 11.17.0, node v24.19.0, 629 locked pkgs):
+#   npm audit --json -> 27 advisories: 1 critical, 11 high, 14 moderate, 1 low
+#   ALL 12 high/critical advisories report a fix as AVAILABLE; none are
+#   unfixable-in-principle. They are open because the fixes require semver-major
+#   dependency bumps (e.g. firebase -> 9.14.0, @vitejs/plugin-react needing
+#   vite ^8) that are engineering decisions, not `npm audit fix` one-liners.
+#   `overrides` in package.json could collapse several of these, but package.json
+#   is outside this agent's write scope AND regenerating the lockfile is
+#   explicitly forbidden, so the ledger is the honest instrument here.
+# ==============================================================================
+env:
+  SOVEREIGN_AUDIT_BASELINE: |
+    {
+      "https://github.com/advisories/GHSA-xv26-6w52-cph6": {
+        "package": "websocket-driver",
+        "severity": "critical",
+        "reason": "DoS in websocket-driver; transitive via firebase realtime transport. Fix requires firebase semver-major to 9.14.0.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-fx2h-pf6j-xcff": {
+        "package": "vite",
+        "severity": "high",
+        "reason": "vite server.fs.deny bypass; dev-server only, not shipped in the production dist bundle. Fix requires vite semver-major.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-m9gg-hp2v-232j": {
+        "package": "@grpc/grpc-js",
+        "severity": "high",
+        "reason": "getAuthContext memory growth; transitive via firebase/firestore. Fix requires firebase semver-major to 9.14.0.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-chx6-hx7r-mcp5": {
+        "package": "react-router",
+        "severity": "high",
+        "reason": "react-router open redirect; transitive via react-router-dom. Fix requires react-router-dom semver-major.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-qwww-vcr4-c8h2": {
+        "package": "react-router",
+        "severity": "high",
+        "reason": "react-router RSC CSRF; transitive via react-router-dom. Fix requires react-router-dom semver-major.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-r28c-9q8g-f849": {
+        "package": "postcss",
+        "severity": "high",
+        "reason": "postcss parsing error / incorrect source map exposure; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-c83g-rgw3-j3cx": {
+        "package": "browserslist",
+        "severity": "high",
+        "reason": "Unbounded memory growth, no cache eviction; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-73wf-gq98-2v4g": {
+        "package": "browserslist",
+        "severity": "high",
+        "reason": "Uncaught crash / prototype write via untrusted regex; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-hmw2-7cc7-3qxx": {
+        "package": "form-data",
+        "severity": "high",
+        "reason": "CRLF injection in multipart boundary; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp": {
+        "package": "brace-expansion",
+        "severity": "high",
+        "reason": "DoS via exponential-time consecutive expansion; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-mh99-v99m-4gvg": {
+        "package": "brace-expansion",
+        "severity": "high",
+        "reason": "DoS via unbounded expansion length; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-rgw5-rvv9-x895": {
+        "package": "brace-expansion",
+        "severity": "high",
+        "reason": "DoS via unbounded intermediate arrays; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-qhr7-859c-m2p7": {
+        "package": "brace-expansion",
+        "severity": "high",
+        "reason": "DoS via uncontrolled recursion on nested braces; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p": {
+        "package": "brace-expansion",
+        "severity": "high",
+        "reason": "DoS via uncontrolled recursion in parseCommand; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-2v37-7h3g-55p8": {
+        "package": "nanoid",
+        "severity": "high",
+        "reason": "Custom generators can loop indefinitely; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      },
+      "https://github.com/advisories/GHSA-28wg-ghj8-5hjv": {
+        "package": "nanoid",
+        "severity": "high",
+        "reason": "Non-secure generators can loop indefinitely; transitive build-time dependency. Fix is non-breaking.",
+        "owner": "dependency-owner",
+        "expires": "2026-11-01"
+      }
+    }
 
 jobs:
   # ----------------------------------------------------------------------------
   # Job 1: Shift-Left Sovereign Quality Gates
   # ----------------------------------------------------------------------------
   quality-gates:
-    name: Sovereign Quality Gate Pipeline
+    name: Sovereign Quality Gate Pipeline (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Hardened: explicit ceiling so a hung step cannot burn the runner budget.
+    timeout-minutes: 20
+    # Hardened: read-only token. This job never writes to the repository.
+    permissions:
+      contents: read
+    strategy:
+      # fail-fast: false -> a failure on one Node version still reports the other,
+      # so a version-specific break is diagnosable from one run.
+      fail-fast: false
+      matrix:
+        # NOTE: package.json declares NO `engines` field, so there is no
+        # authoritative supported range to read. The project targets Node 22 in
+        # the previous workflow and the local/authoring runtime is Node 24.19.0,
+        # so both maintained LTS lines are exercised. RECOMMENDED FOLLOW-UP for
+        # the orchestrator: add an `engines` block to package.json and drive this
+        # matrix from it, so the supported range stops being an inference.
+        node: [ '22.x', '24.x' ]
 
     steps:
       - name: 🛡️ Checkout Source Code
-        uses: actions/checkout@v4
+        # Pinned by SHA. `git ls-remote https://github.com/actions/checkout refs/tags/v5`
+        #   -> fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  (refs/tags/v5)
+        # Verified `runs.using: node24` at this SHA, which clears the
+        # "Node.js 20 is deprecated" warning that refs/tags/v4 still emitted.
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: ⚙️ Setup Node.js Runtime (v22 LTS)
-        uses: actions/setup-node@v4
+      - name: ⚙️ Setup Node.js Runtime (${{ matrix.node }})
+        # Pinned by SHA. `git ls-remote https://github.com/actions/setup-node refs/tags/v5`
+        #   -> a0853c24544627f65ddf259abe73b1d18a591444  (refs/tags/v5)
+        # Verified `runs.using: 'node24'` at this SHA.
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: 'npm'
 
       - name: 🐍 Setup Python Runtime (v3.12)
-        uses: actions/setup-python@v5
+        # Pinned by SHA. `git ls-remote https://github.com/actions/setup-python refs/tags/v6`
+        #   -> ece7cb06caefa5fff74198d8649806c4678c61a1  (refs/tags/v6)
+        # Verified `runs.using: 'node24'` at this SHA.
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
 
-      - name: '📦 Install Project Dependencies'
+      # `npm ci` stays STRICT on purpose.
+      # `--legacy-peer-deps` is deliberately NOT used: it is exactly what makes a
+      # Dependabot major bump (e.g. @vitejs/plugin-react demanding peer vite ^8
+      # against a project pinning vite ^6) install "successfully" while the tree
+      # is genuinely incompatible. A real peer conflict must fail loudly here.
+      - name: '📦 Install Project Dependencies (strict peer resolution)'
         run: npm ci
 
       - name: '🔍 Gate 1: TypeScript Integrity Check (tsc --noEmit)'
@@ -52,16 +276,386 @@ jobs:
         env:
           CHAIN_KEY_ID: "360ea36c28e66d9d"
 
-      - name: '🔒 Gate 3: Security & Supply Chain Vulnerability Audit'
-        run: npm audit --audit-level=high || echo "⚠️ Security audit completed with advisory warnings"
+      # ----------------------------------------------------------------------------
+      # Gate 3 — SUPPLY-CHAIN VULNERABILITY AUDIT (ENFORCED)
+      # ----------------------------------------------------------------------------
+      # REPLACES the decorative step that read:
+      #     npm audit --audit-level=high || echo "⚠️ Security audit completed ..."
+      # The `|| echo` consumed npm's non-zero exit code, so this step reported
+      # SUCCESS on every run while printing genuine high/critical advisories.
+      #
+      # `set +e` / `set -e` is used to CAPTURE npm's exit code for reporting. It is
+      # NOT a swallow: the captured code is printed, and the policy decision
+      # (fail on any new / stale / expired high-or-critical entry) is enforced
+      # immediately afterwards by the inline verifier, which exits non-zero.
+      # There is no `|| true` and no `|| echo` anywhere in this gate.
+      - name: '🔒 Gate 3: Supply-Chain Vulnerability Audit (ENFORCED, baseline-backed)'
+        run: |
+          set +e
+          npm audit --json > npm-audit.json
+          AUDIT_EXIT=$?
+          set -e
+          echo "npm audit raw exit code: ${AUDIT_EXIT}"
+          echo "----------------------------------------------------------------------"
+          python - <<'PY'
+          import datetime, json, os, sys
 
-      - name: '🏗️ Gate 4: Production Build Verification (Vite + esbuild)'
+          AUDIT_FILE = "npm-audit.json"
+          BLOCKING = {"critical", "high"}
+          TODAY = datetime.date.today()
+
+          print("=" * 78)
+          print(" SOVEREIGN SUPPLY-CHAIN ADVISORY GATE (Chain Key 360ea36c28e66d9d)")
+          print("=" * 78)
+
+          if not os.path.exists(AUDIT_FILE):
+              print(" [BLOCKED] %s was not produced; npm audit did not complete." % AUDIT_FILE)
+              sys.exit(1)
+
+          raw = open(AUDIT_FILE, encoding="utf-8").read().strip()
+          if not raw:
+              print(" [BLOCKED] npm audit produced empty output (registry unreachable?).")
+              print("          An unreachable registry is NOT a pass. Resolve the network")
+              print("          or the audit endpoint, then re-run. Failing closed.")
+              sys.exit(1)
+
+          try:
+              data = json.loads(raw)
+          except Exception as exc:
+              print(" [BLOCKED] npm audit output was not valid JSON: %s" % exc)
+              sys.exit(1)
+
+          vuln_meta = data.get("metadata", {}).get("vulnerabilities", {})
+          print(" Advisory counts reported by npm: %s" % json.dumps(vuln_meta, sort_keys=True))
+
+          # Build the set of DISTINCT high/critical ADVISORY IDENTIFIERS (GHSA URLs).
+          # Advisory URL is the true identity of an advisory; a package name is too
+          # coarse (a new advisory in an already-listed package must still block).
+          current = {}
+          for pkg, entry in (data.get("vulnerabilities") or {}).items():
+              for via in entry.get("via", []):
+                  if isinstance(via, dict):
+                      url = via.get("url")
+                      sev = str(via.get("severity") or "").lower()
+                      if url and sev in BLOCKING:
+                          current[url] = sev
+
+          try:
+              baseline = json.loads(os.environ["SOVEREIGN_AUDIT_BASELINE"])
+          except Exception as exc:
+              print(" [BLOCKED] SOVEREIGN_AUDIT_BASELINE is missing or unparseable: %s" % exc)
+              print("          The ledger is the gate. Without it there is no policy.")
+              sys.exit(1)
+
+          print(" Blocking-severity advisories currently open : %d" % len(current))
+          print(" Blocking-severity advisories in the ledger   : %d" % len(baseline))
+
+          new     = sorted(set(current) - set(baseline))
+          stale   = sorted(set(baseline) - set(current))
+          expired = sorted(
+              u for u in (set(current) & set(baseline))
+              if datetime.date.fromisoformat(baseline[u]["expires"]) < TODAY
+          )
+
+          print()
+          print("--- NON-BLOCKING SEVERITIES (reported, not enforced) ---")
+          for sev in ("moderate", "low", "info"):
+              count = vuln_meta.get(sev, 0)
+              if count:
+                  print("  %-9s %d" % (sev, count))
+          print("  Policy: moderate/low are ADVISORY ONLY. They are counted and printed")
+          print("  so they cannot be quietly forgotten, but they do not block, because")
+          print("  blocking on them today would mean a permanently red pipeline that")
+          print("  gets ignored - which is how the original `|| echo` gate happened.")
+
+          failed = False
+
+          print()
+          if new:
+              failed = True
+              print(" [BLOCKED] %d NEW high/critical advisory(ies) not in the ledger:" % len(new))
+              for u in new:
+                  print("   - [%s] %s" % (current[u], u))
+              print("          These are genuinely new findings. Fix them, or add a ledger")
+              print("          entry with a reason, an owner and an expiry date.")
+
+          if stale:
+              failed = True
+              print(" [BLOCKED] %d ledger entr(ies) no longer reported by npm audit:" % len(stale))
+              for u in stale:
+                  print("   - %s (was %s)" % (u, baseline[u].get("package")))
+              print("          These are FIXED upstream. Remove them from the ledger.")
+              print("          A ledger that cannot shrink is a permanent rubber stamp.")
+
+          if expired:
+              failed = True
+              print(" [BLOCKED] %d ledger entr(ies) PAST THEIR EXPIRY DATE:" % len(expired))
+              for u in expired:
+                  e = baseline[u]
+                  print("   - %s (%s) expired %s" % (u, e.get("package"), e.get("expires")))
+              print("          The expiry is enforced. Remediate, or re-baseline with a")
+              print("          written justification and a new date.")
+
+          print()
+          if failed:
+              print(" RESULT: GATE 3 FAILED. Supply-chain policy is NOT satisfied.")
+              print("=" * 78)
+              sys.exit(1)
+
+          print(" RESULT: GATE 3 PASSED.")
+          print("   - no new high/critical advisories beyond the enforced ledger")
+          print("   - ledger is current (no stale entries)")
+          print("   - no ledger entry is past its expiry date")
+          print("=" * 78)
+          PY
+
+      - name: '🧾 Gate 4: Registry Provenance & Signature Verification'
+        # Provenance half of the supply-chain gate: `npm audit` reports KNOWN
+        # advisories; this step detects a package whose published artifact does
+        # not match what the registry signs for. Requires npm >= 9.5.0
+        # (npm audit signatures). Verified locally on npm 11.17.0:
+        #   "audited 618 packages / 618 packages have verified registry signatures"
+        # This step is NOT given `continue-on-error`: an unverifiable artifact is
+        # a failed provenance check, not a skipped one.
+        run: npm audit signatures
+
+      - name: '🗂️ Gate 5: Dual-Lockfile Integrity (npm vs bun)'
+        # The repository carries BOTH package-lock.json and bun.lock at the root.
+        # CI installs from npm only, so a local Bun workflow can silently resolve a
+        # DIFFERENT dependency tree than the one this pipeline verifies.
+        #
+        # Measured 2026-10-02 (read-only comparison of both lockfiles):
+        #   31 direct dependencies in package.json
+        #     28 present in BOTH lockfiles at an identical version
+        #      2 MISSING from bun.lock  : cross-env, puppeteer-core
+        #      1 VERSION MISMATCH       : esbuild  npm=0.28.0  bun=0.25.12
+        #   (a deeper comparison also shows 41 transitive version mismatches
+        #    including every @esbuild/* platform binary, plus 88 entries present
+        #    only in bun.lock - so bun.lock is both stale AND divergent)
+        #
+        # `esbuild` produces the production server bundle. npm and bun disagree
+        # about which esbuild builds it. That is precisely the supply-chain hole
+        # this gate exists to close, so it is BLOCKING.
+        #
+        # REMEDIATION (orchestrator decision, deliberately NOT taken here):
+        #   either delete bun.lock and standardise on npm, or regenerate it under
+        #   review and then update the ledger. Regenerating a lockfile produces a
+        #   very large unreviewed diff and is out of scope for this change.
+        run: |
+          python - <<'PY'
+          import json, os, re, sys
+
+          print("=" * 78)
+          print(" SOVEREIGN DUAL-LOCKFILE INTEGRITY GATE")
+          print("=" * 78)
+
+          def read_jsonc(path):
+              text = open(path, encoding="utf-8").read()
+              text = re.sub(r"^\s*//.*$", "", text, flags=re.M)
+              text = re.sub(r",(\s*[}\]])", r"\1", text)
+              return json.loads(text)
+
+          try:
+              pkg = json.load(open("package.json", encoding="utf-8"))
+          except Exception as exc:
+              print(" [BLOCKED] cannot read package.json: %s" % exc)
+              sys.exit(1)
+
+          npm_lock, bun_lock = "package-lock.json", "bun.lock"
+          if not os.path.exists(npm_lock):
+              print(" [BLOCKED] missing %s - CI would install from an unresolved tree." % npm_lock)
+              sys.exit(1)
+          if not os.path.exists(bun_lock):
+              print(" no %s present: single-lockfile repository, gate passes." % bun_lock)
+              print("=" * 78)
+              sys.exit(0)
+
+          npmv = {}
+          for path, meta in (json.load(open(npm_lock, encoding="utf-8")).get("packages") or {}).items():
+              if path and "version" in meta:
+                  npmv[path.split("node_modules/")[-1]] = meta["version"]
+
+          bunv = {}
+          for name, entry in (read_jsonc(bun_lock).get("packages") or {}).items():
+              if isinstance(entry, list) and entry and isinstance(entry[0], str) and "@" in entry[0]:
+                  bunv[name] = entry[0].rsplit("@", 1)[1]
+
+          direct = {}
+          for section in ("dependencies", "devDependencies"):
+              for name, rng in (pkg.get(section) or {}).items():
+                  direct[name] = (section, rng)
+
+          missing, mismatch = [], []
+          for name, (section, rng) in sorted(direct.items()):
+              a, b = npmv.get(name), bunv.get(name)
+              if b is None:
+                  missing.append((name, section, rng, a))
+              elif a != b:
+                  mismatch.append((name, section, rng, a, b))
+
+          print(" Direct dependencies declared in package.json : %d" % len(direct))
+          print(" Present in BOTH lockfiles at identical version: %d"
+                % (len(direct) - len(missing) - len(mismatch)))
+          print(" MISSING from bun.lock                        : %d" % len(missing))
+          print(" VERSION MISMATCH between lockfiles           : %d" % len(mismatch))
+
+          if not missing and not mismatch:
+              print()
+              print(" RESULT: GATE 5 PASSED - both lockfiles resolve every direct dependency")
+              print("         to the same version.")
+              print("=" * 78)
+              sys.exit(0)
+
+          print()
+          for name, section, rng, a in missing:
+              print(" [BLOCKED] %-24s (%s) declared %s but ABSENT from bun.lock "
+                    "(package-lock has %s) -> bun.lock is stale" % (name, section, rng, a))
+          for name, section, rng, a, b in mismatch:
+              print(" [BLOCKED] %-24s (%s) declared %s resolves to npm=%s but bun=%s "
+                    "-> the two trees disagree" % (name, section, rng, a, b))
+          print()
+          print(" RESULT: GATE 5 FAILED.")
+          print(" A Bun-based local workflow does not produce the dependency tree this")
+          print(" pipeline verifies. Resolve by deleting bun.lock (standardise on npm)")
+          print(" or regenerating it under review - an orchestrator decision.")
+          print("=" * 78)
+          sys.exit(1)
+          PY
+
+      - name: '🏗️ Gate 6: Production Build Verification (Vite + esbuild)'
         run: npm run build
 
+      # ----------------------------------------------------------------------------
+      # Workflow self-verification: prove the gates themselves are wired up.
+      # ----------------------------------------------------------------------------
+      # Parses this workflow with a real YAML parser and asserts the gate
+      # structure is present. This is what stops a future edit from quietly
+      # deleting a gate: the assertions below FAIL if a gate step disappears.
+      - name: '🧾 Gate 7: Workflow Integrity Self-Verification (YAML parse + gate assertions)'
+        run: |
+          python - <<'PY'
+          import sys
+
+          try:
+              import yaml
+          except ImportError:
+              print(" [UNVERIFIED] PyYAML unavailable; cannot self-verify the workflow.")
+              print("            Install with: python -m pip install pyyaml")
+              sys.exit(1)
+
+          with open(".github/workflows/ci.yml", encoding="utf-8") as fh:
+              wf = yaml.safe_load(fh)
+
+          # NOTE: YAML 1.1 parses the bare key `on` as the BOOLEAN True.
+          # Accept either representation so this assertion is parser-agnostic.
+          triggers = wf.get(True, wf.get("on"))
+          if not isinstance(triggers, dict):
+              print(" [BLOCKED] workflow has no parsable trigger block (on:)")
+              sys.exit(1)
+          print(" Trigger keys parsed: %s" % sorted(triggers.keys()))
+
+          jobs = wf.get("jobs") or {}
+          steps = jobs["quality-gates"]["steps"]
+          names = [str(s.get("name", "")) for s in steps]
+
+          # Assert each gate by its EXACT marker "Gate N:" rather than a bare
+          # "Gate N" substring. A bare substring match is defeatable by leaving the
+          # token in an unrelated step name (e.g. renaming a step to
+          # "REMOVED Gate 5 step" would satisfy it). Requiring the colon means a
+          # genuinely deleted gate step cannot be masked.
+          required = ["Gate %d:" % n for n in range(1, 8)]
+          absent = [g for g in required if not any(g in n for n in names)]
+          if absent:
+              print(" [BLOCKED] missing gate step(s): %s" % ", ".join(absent))
+              print("            present steps: %s" % names)
+              sys.exit(1)
+          print(" All %d gate steps present." % len(required))
+
+          # Every `uses:` must be a full 40-hex commit SHA. A mutable tag is a
+          # supply-chain hole, so it is asserted here rather than trusted.
+          import re
+          SELF_STEP_NAME = (
+              "\U0001f9fe Gate 7: Workflow Integrity Self-Verification "
+              "(YAML parse + gate assertions)"
+          )
+          sha = re.compile(r"^[0-9a-f]{40}$")
+          bad = []
+          for job_name, job in jobs.items():
+              for step in job.get("steps") or []:
+                  uses = step.get("uses")
+                  if not uses:
+                      continue
+                  ref = uses.split("@", 1)[1] if "@" in uses else ""
+                  if not sha.match(ref):
+                      bad.append("%s -> %s" % (job_name, uses))
+          if bad:
+              print(" [BLOCKED] action(s) not pinned to a full commit SHA:")
+              for b in bad:
+                  print("   %s" % b)
+              sys.exit(1)
+          print(" Every `uses:` reference is pinned to a 40-char commit SHA.")
+
+          # The decorative-gate pattern must never come back. Three precision rules make
+          # this check meaningful instead of self-defeating:
+          #   (1) COMMENT LINES ARE STRIPPED before matching. This workflow quotes
+          #       the old defective command (`... || echo "..."`) as forensic
+          #       record; a comment cannot swallow an exit code, so it is not a
+          #       violation.
+          #   (2) QUOTED SEGMENTS ARE STRIPPED before matching. The banned text
+          #       also appears inside Python/shell STRING LITERALS (for example
+          #       this gate's own diagnostic prose inside a print()). Text inside
+          #       quotes is data, not a shell operator, so it must not match.
+          #   (3) THIS STEP IS EXCLUDED from its own scan, because its source
+          #       necessarily contains the banned literals.
+          # What remains after (1) and (2) is executable shell/python, so a match
+          # there is a genuine attempt to swallow a non-zero exit code.
+          banned = ("|| echo", "|| true")
+          quoted = re.compile(r"\"[^\"]*\"|'[^']*'")
+          offenders = []
+          for job_name, job in jobs.items():
+              for step in job.get("steps") or []:
+                  if step.get("name") == SELF_STEP_NAME:
+                      continue
+                  run = step.get("run")
+                  if not isinstance(run, str):
+                      continue
+                  for lineno, line in enumerate(run.splitlines(), 1):
+                      if line.lstrip().startswith("#"):
+                          continue
+                      executable = quoted.sub("", line)
+                      for pattern in banned:
+                          if pattern in executable:
+                              offenders.append("%s / %s line %d -> %s"
+                                               % (job_name, step.get("name", "?"), lineno, pattern))
+          if offenders:
+              print(" [BLOCKED] failure-swallowing pattern on an executable line:")
+              for o in offenders:
+                  print("   %s" % o)
+              sys.exit(1)
+          print(" No `|| echo` / `|| true` on any executable line of any other step.")
+
+          for job_name, job in jobs.items():
+              if "timeout-minutes" not in job:
+                  print(" [BLOCKED] job %s has no timeout-minutes" % job_name)
+                  sys.exit(1)
+              if "permissions" not in job:
+                  print(" [BLOCKED] job %s has no least-privilege permissions block" % job_name)
+                  sys.exit(1)
+          print(" Every job declares timeout-minutes and a permissions block.")
+
+          print()
+          print(" RESULT: GATE 7 PASSED - workflow structure is intact and pinned.")
+          PY
+
       - name: '📤 Archive Production Artifacts'
-        uses: actions/upload-artifact@v4
+        # Pinned by SHA. `git ls-remote https://github.com/actions/upload-artifact refs/tags/v7`
+        #   -> 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  (refs/tags/v7)
+        # Verified `runs.using: 'node24'` at this SHA, and that the `name`, `path`
+        # and `retention-days` inputs used here are all still declared by this
+        # major (refs/tags/v5 was still node20 and would not have cleared it).
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: sovereign-dist-bundle
+          name: sovereign-dist-bundle-node${{ matrix.node }}
           path: dist/
           retention-days: 7
 
@@ -72,17 +666,32 @@ jobs:
     name: Container Integrity & Dockerfile Check
     runs-on: ubuntu-latest
     needs: quality-gates
-    timeout-minutes: 8
+    # Hardened: explicit ceiling.
+    timeout-minutes: 15
+    # Hardened: read-only repo, plus the `actions` scope required to read/write the
+    # GitHub Actions layer cache used by cache-from/cache-to below.
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - name: 🛡️ Checkout Source Code
-        uses: actions/checkout@v4
+        # Same pinned SHA as Job 1.
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: 🐳 Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        # Pinned by SHA. `git ls-remote https://github.com/docker/setup-buildx-action refs/tags/v4`
+        #   -> f87e5991a6d7451dcb8d9637bfbc97413f497069  (refs/tags/v4)
+        # Verified `runs.using: 'node24'` at this SHA.
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: 🏗️ Verify Dockerfile Compilation
-        uses: docker/build-push-action@v5
+        # Pinned by SHA. `git ls-remote https://github.com/docker/build-push-action refs/tags/v7`
+        #   -> c3c9e263c25d99ce0380d002d59b67737d91b0dc  (refs/tags/v7)
+        # Verified `runs.using: 'node24'` at this SHA, and that `context`, `push`,
+        # `tags`, `cache-from` and `cache-to` are all still declared by this major
+        # (refs/tags/v5 and refs/tags/v6 were still node20).
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           push: false

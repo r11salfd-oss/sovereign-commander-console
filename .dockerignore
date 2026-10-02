@@ -1,11 +1,142 @@
+# ============================================================
+# .dockerignore — Sovereign Commander Console
+# HARDENED (Wave 2 / A4).
+#
+# WHY THE "**/" FORMS:
+#   Docker matches a bare pattern (e.g. "node_modules") against the
+#   CONTEXT ROOT ONLY. It does NOT match nested paths. Per Docker's
+#   own docs, "**/*.go" excludes at the root AND in every subdirectory
+#   ("**" = zero or more path segments). The previous file relied
+#   entirely on bare/root-anchored patterns, so ANY nested copy of a
+#   secret, a .git dir, or a node_modules tree would have been swept
+#   into the builder layer by "COPY . .".
+#   => Every exclusion below now uses the RECURSIVE "**/" form, and the
+#      bare root form is retained alongside it as defence in depth.
+#
+# ORDERING RULE (Docker semantics): LAST matching line wins.
+#   Therefore "!.env.example" MUST stay BELOW the "**/.env.*" rules,
+#   otherwise the documented example file would stay excluded.
+# ============================================================
+
+# --- Version control: repo history is a credential-leak vector ---
+**/.git
+**/.git/**
+**/.svn
+**/.hg
+**/.bzr
+# Defensive guard: verified 2026-10-02 that NO nested clone of this
+# repository exists under the context root, so this is currently a
+# no-op. Kept deliberately so a nested checkout can never be swept in.
+**/sovereign-commander-console
+
+# --- Secrets: must never enter the build context ---
+# Runtime secrets are supplied to the CONTAINER as ENV via "docker run
+# -e ..." (confirmed in docker inspect), not read from the context.
+# Excluding these is build-safe: the app has ZERO import.meta.env and
+# ZERO VITE_* usage, so Vite inlines nothing from .env at build time;
+# all secret reads are process.env at RUNTIME.
+**/.env
+**/.env.*
+# Catch-all for arbitrarily-named env files at any depth (e.g. a
+# nested "local.env"); none exist in this repo today, and no required
+# build input ends in ".env", so this cannot break the build.
+**/*.env
+!.env.example
+**/.npmrc
+**/.pypirc
+**/.netrc
+**/credentials
+**/*credential*
+**/secrets.env
+# Host MCP tree (E:\Servers-Center) uses an "env/secrets.env" layout;
+# blocked here so that tree can never be copied in if ever mounted in.
+**/env
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.p12
+**/*.keystore
+**/id_rsa
+**/id_rsa.*
+**/id_ed25519*
+
+# --- Dependencies / build output: both rebuilt inside the image ---
 node_modules
+**/node_modules
 dist
-.git
-.env
-.env.local
+**/dist
+**/build
+**/.vite
+**/coverage
+
+# --- Logs (pre-existing rules, now recursive) ---
 *.log
+**/*.log
 npm-debug.log*
+**/npm-debug.log*
 yarn-debug.log*
+**/yarn-debug.log*
 yarn-error.log*
+**/yarn-error.log*
+pnpm-debug.log*
+**/pnpm-debug.log*
+
+# --- Package-manager / bundler caches ---
+**/.yarn
+**/.pnpm-store
+**/.cache
+**/.turbo
+**/.parcel-cache
+
+# --- Editor / OS / agent tooling noise ---
+**/.vscode
+**/.idea
+**/.agents
+**/.DS_Store
+**/Thumbs.db
+**/desktop.ini
+
+# --- Docker build plumbing ---
+# Safe to ignore: Docker still transmits the Dockerfile and the
+# .dockerignore itself to the builder regardless of these rules, because
+# the builder needs them. They are excluded only so that "COPY . ."
+# does not bake them into an image layer.
+Dockerfile
+**/Dockerfile
+Dockerfile.*
+**/Dockerfile.*
+docker-compose*
+**/docker-compose*
+.dockerignore
+**/.dockerignore
+
+# --- CI/CD + deploy automation: must not be baked into layers ---
+**/.github
+cloudbuild.yaml
+deploy-to-gcp.sh
+
+# --- Local scratch / screenshot output ---
+# (pre-existing exclusions, retained and made recursive)
 scratch
+**/scratch
 screenshots
+**/screenshots
+
+# ============================================================
+# DELIBERATELY KEPT IN THE CONTEXT (required by the build):
+#   package.json, package-lock.json   -> "npm ci" in BOTH stages
+#                                      (COPY package*.json)
+#   tsconfig.json                     -> read by esbuild/tsx + tsc
+#   vite.config.ts                    -> vite build config
+#   index.html                        -> vite entry HTML
+#   src/**                            -> browser bundle + server.ts
+#                                      imports (./src/os/kernelEngine,
+#                                      ./src/services/*, ./src/workspace/*)
+#   public/**                         -> copied to runner as ./public
+#   server.ts                         -> esbuild bundles -> dist/server.cjs
+#   firebase-applet-config.json       -> src/firebase.ts imports
+#                                      '../firebase-applet-config.json'
+#   opencode.json                     -> runtime MCP/host topology config
+#   config/**, scripts/**, docs/**    -> not build inputs; kept to avoid
+#                                      breaking runtime/tooling paths.
+# ============================================================

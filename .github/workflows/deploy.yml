@@ -3,10 +3,57 @@
 # Authority: Supreme Sovereign Commander
 # Chain Key ID: 360ea36c28e66d9d
 # ==============================================================================
+#
+# ── DEPLOYMENT HONESTY NOTICE (Chain Key 360ea36c28e66d9d) ──────────────────
+#
+# WHAT THIS WORKFLOW PREVIOUSLY DID:
+#   The two steps that actually performed the deployment had their `gcloud`
+#   commands COMMENTED OUT. Every invocation therefore produced a GREEN CHECK
+#   while deploying NOTHING. A silent no-op is the most dangerous possible
+#   deployment failure: it looks like success, it erodes trust in the pipeline,
+#   and it hides the fact that no deployment path exists at all.
+#
+# WHAT THIS WORKFLOW NOW DOES:
+#   It FAILS LOUDLY AND HONESTLY. There is no path by which this workflow
+#   reports success without having deployed.
+#
+#   1. PRE-FLIGHT SECRET GATE - required secrets are checked by NAME only (no
+#      values are ever printed). If they are absent the run fails immediately
+#      with an explicit, actionable message.
+#   2. EXPLICIT CONFIRMATION - a `confirm_production_deploy` typed string is
+#      required before any production target will proceed, so a mistaken
+#      `workflow_dispatch` cannot promote to production unnoticed.
+#   3. EXECUTION IS STILL NOT YET AVAILABLE. The Commander has NOT approved
+#      infrastructure changes and no GCP credentials exist in this repository.
+#      The real `gcloud` invocations are preserved below, clearly marked as the
+#      PENDING PRODUCTION PATH, and the job fails with an explicit
+#      "NOT YET WIRED" error instead of pretending to deploy.
+#
+#   This is the honest intermediate state: an explicit, loud failure is
+#   correct until real credentials and an approved deployment path exist. The
+#   defect being removed here is the green-with-no-deploy, not the absence of
+#   deployment itself.
+#
+# ── ACTIONS PINNED BY COMMIT SHA ──────────────────────────────────────────────
+#   git ls-remote https://github.com/actions/checkout            refs/tags/v5
+#     -> fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+#   git ls-remote https://github.com/actions/setup-node          refs/tags/v5
+#     -> a0853c24544627f65ddf259abe73b1d18a591444
+#   git ls-remote https://github.com/google-github-actions/auth  refs/tags/v3
+#     -> 7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+#   git ls-remote https://github.com/google-github-actions/setup-gcloud refs/tags/v3
+#     -> aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+# Each SHA was fetched and its action.yml inspected to confirm
+# `runs.using: node24`, clearing the Node.js 20 deprecation warning that the
+# previous v4/v2 tag pins emitted on every single run.
+# ==============================================================================
 
 name: Sovereign Continuous Deployment & Rollback
 
 on:
+  # workflow_dispatch ONLY. There is deliberately no `push`/`schedule` trigger:
+  # a deployment must be a deliberate human decision, never a side effect of a
+  # merge or a timer.
   workflow_dispatch:
     inputs:
       target_env:
@@ -29,6 +76,20 @@ on:
         description: 'Version Tag or Commit SHA (required for rollback)'
         required: false
         default: 'latest'
+      confirm_production_deploy:
+        description: 'For target_env=production, type DEPLOY-PRODUCTION to confirm. Anything else refuses the run.'
+        required: false
+        default: ''
+
+# No silent cancellation of an in-flight deployment attempt: a cancelled deploy
+# would leave an ambiguous state, which is worse than a queued one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least privilege: this workflow reads the repository. It never writes to it.
+permissions:
+  contents: read
 
 jobs:
   # ----------------------------------------------------------------------------
@@ -37,60 +98,187 @@ jobs:
   deployment-gate:
     name: Pre-Flight Verification Gate
     runs-on: ubuntu-latest
+    # Hardened: explicit ceiling so a hung gate cannot burn the runner budget.
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: 🛡️ Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: ⚙️ Setup Environment & Dependencies
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22'
           cache: 'npm'
 
       - name: 📦 Install Dependencies
+        # Strict peer resolution is intentional - see ci.yml for the rationale.
         run: npm ci
 
       - name: 🔍 Integrity Pass
         run: npx tsc --noEmit
 
+      - name: ⚖️ Sovereign Master Test Matrix
+        run: python3 scripts/run_sovereign_tests.py
+        env:
+          CHAIN_KEY_ID: "360ea36c28e66d9d"
+
+      - name: 🧾 Registry Provenance Verification
+        # Confirms the exact artifacts being deployed match signed registry
+        # provenance before anything is promoted to a live environment.
+        run: npm audit signatures
+
   # ----------------------------------------------------------------------------
-  # Job 2: Cloud Run / GCP Deployment & Rollback Execution
+  # Job 2: Authorization & Secret Pre-Flight (fail-fast, no silent success)
+  # ----------------------------------------------------------------------------
+  authorization-gate:
+    name: Sovereign Authorization & Secret Pre-Flight
+    runs-on: ubuntu-latest
+    needs: deployment-gate
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: '🔐 Sovereign Secret Pre-Flight (names only - never prints values)'
+        env:
+          GCP_SA_KEY: ${{ secrets['GCP_SA_KEY'] }}
+          GCP_PROJECT_ID: ${{ secrets['GCP_PROJECT_ID'] }}
+        run: |
+          set -uo pipefail
+          echo "----------------------------------------------------------------------"
+          echo " SOVEREIGN SECRET PRE-FLIGHT"
+          echo "----------------------------------------------------------------------"
+
+          missing=0
+          # Indirect expansion `${!name}` tests PRESENCE only. No value is ever
+          # echoed, so this step cannot leak credentials into the run log.
+          for name in GCP_SA_KEY GCP_PROJECT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::MISSING REQUIRED SECRET: ${name}"
+              missing=1
+            else
+              echo " [PRESENT] ${name}"
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
+            echo ""
+            echo " [BLOCKED] Required deployment secrets are absent."
+            echo " Refusing to report a successful deployment. A green run with no"
+            echo " deployment is the exact defect this gate exists to eliminate."
+            echo ""
+            echo " REMEDIATION (requires Commander action - not performed by CI):"
+            echo "   1. Create/provision a GCP service account with Cloud Run Admin,"
+            echo "      Artifact Registry Reader and Service Account User roles."
+            echo "   2. Store its JSON key as repository secret GCP_SA_KEY."
+            echo "   3. Store the target project id as repository secret GCP_PROJECT_ID."
+            exit 1
+          fi
+
+          echo ""
+          echo " [OK] All required secrets are present (values not shown)."
+
+      - name: '🛡️ Sovereign Production Confirmation Gate'
+        # A deliberate, typed confirmation. This prevents a mistaken
+        # workflow_dispatch from promoting an unreviewed commit to production.
+        env:
+          TARGET_ENV: ${{ inputs.target_env }}
+          CONFIRMATION: ${{ inputs.confirm_production_deploy }}
+        run: |
+          if [ "${TARGET_ENV}" = "production" ]; then
+            if [ "${CONFIRMATION}" != "DEPLOY-PRODUCTION" ]; then
+              echo "::error::target_env=production requires confirm_production_deploy=DEPLOY-PRODUCTION"
+              echo " Received: '${CONFIRMATION}'"
+              exit 1
+            fi
+            echo " [OK] Production deployment explicitly confirmed by the operator."
+          else
+            echo " [OK] Non-production target ('${TARGET_ENV}'); confirmation not required."
+          fi
+
+  # ----------------------------------------------------------------------------
+  # Job 3: Cloud Run Deployment & Rollback Execution
   # ----------------------------------------------------------------------------
   deploy-or-rollback:
     name: Execute Deploy / Rollback Operation
     runs-on: ubuntu-latest
-    needs: deployment-gate
+    needs: authorization-gate
+    # Hardened: explicit ceiling.
+    timeout-minutes: 20
+    # Least privilege. This job authenticates to GCP with OIDC-free static
+    # credentials from secrets; it needs no extra GitHub token scopes.
+    permissions:
+      contents: read
     env:
-      GCP_SA_KEY: ${{ secrets['GCP_SA_KEY'] }}
-      GCP_PROJECT_ID: ${{ secrets['GCP_PROJECT_ID'] || 'sovereign-commander-console' }}
+      GCP_PROJECT_ID: ${{ secrets['GCP_PROJECT_ID'] }}
     steps:
       - name: '🛡️ Checkout Source Code'
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: '🔐 Authenticate to Google Cloud'
-        uses: google-github-actions/auth@v2
-        if: ${{ env.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
-          credentials_json: ${{ env.GCP_SA_KEY }}
+          # The secret is passed by name from the job environment; its VALUE is
+          # never echoed by this workflow.
+          credentials_json: ${{ secrets['GCP_SA_KEY'] }}
 
       - name: '☁️ Set up Cloud SDK'
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
+      # ----------------------------------------------------------------------------
+      # PENDING PRODUCTION PATH - NOT YET EXECUTABLE
+      # ----------------------------------------------------------------------------
+      # The commands below are the real deployment. They stay commented out until
+      # BOTH conditions are met:
+      #   (a) the Commander approves infrastructure changes, and
+      #   (b) an image actually exists at the referenced Artifact Registry path.
+      #
+      # Note the image path below. The original comment referenced
+      # `gcr.io/${GCP_PROJECT_ID}/...`, but the project's own
+      # cloudbuild.yaml must be read to confirm the registry host actually in
+      # use (gcr.io vs Artifact Registry *.docker.pkg.dev) before this is
+      # enabled. Deploying to the wrong registry is a silent no-op at best.
+      #
+      # When approved, replace the failing step below with the real invocation:
+      #
+      #   gcloud run deploy sovereign-commander-console-${{ inputs.target_env }} \
+      #     --image=<REGISTRY>/${{ env.GCP_PROJECT_ID }}/sovereign-commander-console:${{ github.sha }} \
+      #     --region=us-central1 --platform=managed
+      #
+      # and for rollback:
+      #
+      #   gcloud run services update-traffic sovereign-commander-console-${{ inputs.target_env }} \
+      #     --to-revisions=${{ inputs.release_version }}=100 --region=us-central1
+      # ----------------------------------------------------------------------------
       - name: '🚀 Execute Staged Deployment'
         if: ${{ inputs.action_type == 'deploy' }}
         run: |
           echo "Initiating Sovereign Deployment to environment: ${{ inputs.target_env }}"
-          echo "Target image: gcr.io/${{ env.GCP_PROJECT_ID }}/sovereign-commander-console:${{ github.sha }}"
-          # Cloud Run deployment execution trigger
-          # gcloud run deploy sovereign-commander-console-${{ inputs.target_env }} \
-          #   --image=gcr.io/${{ env.GCP_PROJECT_ID }}/sovereign-commander-console:${{ github.sha }} \
-          #   --region=us-central1 --platform=managed
+          echo "Target image: gcr.io/${GCP_PROJECT_ID}/sovereign-commander-console:${GITHUB_SHA}"
+          echo ""
+          echo "::error::DEPLOYMENT NOT WIRED - refusing to report a false success."
+          echo " The gcloud run deploy invocation for environment"
+          echo " '${{ inputs.target_env }}' is intentionally not enabled."
+          echo ""
+          echo " Required before this step can perform a real deployment:"
+          echo "   1. Commander approval for infrastructure changes."
+          echo "   2. Confirmation of the real image registry host used by"
+          echo "      cloudbuild.yaml (gcr.io vs Artifact Registry)."
+          echo "   3. A built and pushed image for SHA ${GITHUB_SHA}."
+          echo ""
+          echo " The exact pending command is documented in comments immediately"
+          echo " above this step in .github/workflows/deploy.yml."
+          exit 1
 
       - name: '🔄 Execute Sovereign Rollback'
         if: ${{ inputs.action_type == 'rollback' }}
         run: |
           echo "Executing Emergency Rollback to target version: ${{ inputs.release_version }}"
           echo "Reverting revision for sovereign-commander-console-${{ inputs.target_env }}"
-          # Cloud Run rollback revision trigger
-          # gcloud run services update-traffic sovereign-commander-console-${{ inputs.target_env }} \
-          #   --to-revisions=${{ inputs.release_version }}=100 --region=us-central1
+          echo ""
+          echo "::error::ROLLBACK NOT WIRED - refusing to report a false success."
+          echo " The gcloud run services update-traffic invocation is intentionally"
+          echo " not enabled. The exact pending command is documented in comments"
+          echo " immediately above this step in .github/workflows/deploy.yml."
+          exit 1

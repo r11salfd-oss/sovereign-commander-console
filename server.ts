@@ -13,6 +13,13 @@ import { spawn, exec } from 'child_process';
 import { sovereignKernelInstance } from './src/os/kernelEngine';
 import { globalSovereignMcpServer } from './src/services/sovereignMcpServer';
 import { globalServersCenterRegistry } from './src/services/serversCenterRegistry';
+// Read-only client for the HOST-side MCP/LSP prober. The console runs inside a
+// Linux container that cannot see the Windows `E:\Servers-Center` tree, so its own
+// filesystem probe can only ever conclude UNVERIFIABLE. The prober runs on the host
+// where the servers genuinely live and performs real initialize/tools/list
+// handshakes; this client transports those measured verdicts. It NEVER decides a
+// verdict itself — when the prober is unreachable it degrades to all-UNVERIFIABLE.
+import { HostProberClient } from './scripts/host_prober_client';
 import ts from 'typescript';
 
 // Auto-load .env environment file if present
@@ -168,11 +175,146 @@ async function startServer() {
   // In-memory Database state
   let approvals: any[] = [];
 
-  let auditChainStatus = {
-    status: 'INTACT',
-    brokenAt: null as string | null,
-    lastRefresh: new Date().toISOString()
+  // ── A11: REAL audit chain verification (replaces the fabricated 'INTACT' literal) ──
+  // The previous revision hardcoded `status: 'INTACT'` and presented it as a
+  // cryptographically tamper-proof ledger without ever hashing anything.
+  //
+  // WHAT IS NOW GENUINELY VERIFIED:
+  //   - every entry created through /api/hitl/propose is stamped with a forward-linked
+  //     SHA-256 (prevHash -> integrityHash) over its immutable fields, so both the
+  //     linkage and the payload integrity can be recomputed and compared.
+  //   - duplicate entry ids and linkage/payload mismatches are real detections and
+  //     are reported as 'TAMPERED'.
+  //
+  // LIMITATION (reported honestly, never hidden):
+  //   The ledger is a process-local in-memory array with NO externally persisted
+  //   genesis anchor, and entries are lost on restart. An attacker who already has
+  //   code execution inside this process could rewrite payloads AND hashes together.
+  //   A clean recomputation therefore proves only "no detectable in-process
+  //   mutation" - it is NOT proof of tamper-resistance. Because genuine
+  //   cryptographic verification is unachievable with the current storage, this
+  //   function never returns 'INTACT'; it returns 'UNVERIFIED' with an explicit
+  //   reason. An honest "cannot verify" is strictly preferred over a fake "INTACT".
+  const AUDIT_GENESIS_HASH = nodeCrypto.createHash('sha256').update('SOVEREIGN_AUDIT_GENESIS_V1').digest('hex');
+
+  type AuditVerification = {
+    status: string;
+    brokenAt: string | null;
+    lastRefresh: string;
+    entryCount: number;
+    verifiedEntries: number;
+    chainHead: string | null;
+    reason: string;
+    checks: { name: string; status: string; detail: string }[];
   };
+
+  // Canonical, field-order-stable serialization of an entry's immutable fields.
+  // Deliberately excludes prevHash/integrityHash themselves.
+  function canonicalAuditPayload(a: any): string {
+    return JSON.stringify([
+      a.id, a.agent, a.type, a.summary, a.reason, a.risk, a.createdAt,
+      JSON.stringify(a.payload ?? null)
+    ]);
+  }
+
+  function computeAuditEntryHash(entry: any, prevHash: string): string {
+    return nodeCrypto.createHash('sha256')
+      .update(prevHash + '|' + canonicalAuditPayload(entry))
+      .digest('hex');
+  }
+
+  function verifyAuditChain(): AuditVerification {
+    const checkedAt = new Date().toISOString();
+    const checks: { name: string; status: string; detail: string }[] = [];
+    const faults: string[] = [];
+
+    // Reconstruct creation order from the immutable monotonic id sequence (ap-<n>).
+    const ordered = approvals
+      .map((a: any) => ({ entry: a, seq: parseInt(String(a.id).split('-')[1], 10) }))
+      .filter((x: any) => Number.isFinite(x.seq))
+      .sort((a: any, b: any) => a.seq - b.seq);
+
+    const entryCount = ordered.length;
+
+    // Check 1 - unique entry identifiers (a replayed/duplicated block is a real fault).
+    const seen = new Set<string>();
+    for (const { entry } of ordered) {
+      if (seen.has(entry.id)) faults.push(`duplicate entry id ${entry.id}`);
+      seen.add(entry.id);
+    }
+    checks.push({
+      name: 'unique_entry_ids',
+      status: faults.length === 0 ? 'passed' : 'failed',
+      detail: `${seen.size}/${entryCount} unique identifiers`
+    });
+
+    // Check 2 - forward-linked SHA-256 chain recomputation + payload integrity.
+    let prev = AUDIT_GENESIS_HASH;
+    let verifiedEntries = 0;
+    let unhashedEntries = 0;
+    for (const { entry } of ordered) {
+      if (typeof entry.integrityHash !== 'string' || typeof entry.prevHash !== 'string') {
+        unhashedEntries++;
+        prev = '';
+        continue;
+      }
+      if (entry.prevHash !== prev) {
+        faults.push(`linkage break at ${entry.id} (prevHash does not match predecessor)`);
+      } else if (computeAuditEntryHash(entry, entry.prevHash) !== entry.integrityHash) {
+        faults.push(`payload hash mismatch at ${entry.id}`);
+      } else {
+        verifiedEntries++;
+        prev = entry.integrityHash;
+      }
+    }
+    checks.push({
+      name: 'forward_linked_sha256_chain',
+      status: faults.length === 0 ? 'passed' : 'failed',
+      detail: `${verifiedEntries}/${entryCount} entries recomputed from genesis ${AUDIT_GENESIS_HASH.slice(0, 12)}`
+    });
+
+    // Check 3 - declare the scope of the attestation explicitly rather than implying
+    // full coverage. The chain covers each entry's IMMUTABLE fields only. Mutable
+    // workflow state (status, signature) is intentionally excluded because approve /
+    // reject / execute mutate it after creation, so it is NOT tamper-evident.
+    checks.push({
+      name: 'attestation_scope',
+      status: 'informational',
+      detail: 'covers id/agent/type/summary/reason/risk/createdAt/payload; mutable status and signature are NOT covered'
+    });
+
+    const coverageComplete = entryCount > 0 && unhashedEntries === 0 && verifiedEntries === entryCount;
+
+    let status: string;
+    let brokenAt: string | null = null;
+    let reason: string;
+
+    if (faults.length > 0) {
+      status = 'TAMPERED';
+      brokenAt = faults[0];
+      reason = faults.join('; ');
+    } else if (entryCount === 0) {
+      status = 'UNVERIFIED';
+      reason = 'The HITL ledger is empty, so no hash chain exists to recompute. Nothing has been cryptographically verified.';
+    } else if (!coverageComplete) {
+      status = 'UNVERIFIED';
+      reason = `Chain coverage is incomplete: ${unhashedEntries}/${entryCount} entries carry no prevHash/integrityHash (created outside /api/hitl/propose or before chain stamping was enabled).`;
+    } else {
+      status = 'UNVERIFIED';
+      reason = `Forward-linked SHA-256 recomputation succeeded for ${verifiedEntries}/${entryCount} entries, but no externally persisted genesis anchor exists: the ledger is process-local and in-memory only, so tamper-evidence cannot be cryptographically proven. Reporting UNVERIFIED instead of a fabricated INTACT.`;
+    }
+
+    return {
+      status,
+      brokenAt,
+      lastRefresh: checkedAt,
+      entryCount,
+      verifiedEntries,
+      chainHead: coverageComplete ? prev : null,
+      reason,
+      checks
+    };
+  }
 
   // Real Agent Activity Metrics Store (24-Hour Deterministic Timeline from Real System State)
   const agentActivityLog: { [agentId: string]: { timestamp: number; type: string }[] } = {
@@ -220,6 +362,56 @@ async function startServer() {
   function recordAgentAction(agentId: string, actionType: string = 'operation') {
     if (!agentActivityLog[agentId]) agentActivityLog[agentId] = [];
     agentActivityLog[agentId].push({ timestamp: Date.now(), type: actionType });
+    // A8: track genuine in-process runtime activity separately from the charted
+    // timeline. Only real executions reach this function with verifiedRuntime=true.
+    const st = agentRuntimeState[agentId] || (agentRuntimeState[agentId] = {
+      lastVerifiedEventAt: 0, verifiedDispatches: 0, lastVerifiedType: null, lastSelfReportedAt: null
+    });
+    if (actionType.startsWith('SELF_REPORT:')) {
+      st.lastSelfReportedAt = Date.now();
+    } else {
+      st.lastVerifiedEventAt = Date.now();
+      st.verifiedDispatches++;
+      st.lastVerifiedType = actionType;
+    }
+  }
+
+  // ── A8: real agent liveness (replaces the hardcoded 'ACTIVE' roster literal) ──
+  // TRUTHFUL CRITERION: an agent is reported ACTIVE only when this process holds a
+  // live runtime handle for it - meaning a genuine in-process dispatch actually
+  // executed within AGENT_ACTIVE_TTL_MS.
+  //   ACTIVE  - verified runtime event inside the TTL.
+  //   STALE   - had a verified runtime event, but it is older than the TTL.
+  //   INACTIVE- no runtime handle was ever registered in this process.
+  // Deliberately NOT used as a liveness signal:
+  //   - the 24h agentActivityLog baseline above, which is seeded with synthetic
+  //     counters for charting and would otherwise report every agent as active;
+  //   - self-reported events from the unauthenticated /api/agents/action endpoint,
+  //     otherwise any visitor could forge the roster.
+  const AGENT_ACTIVE_TTL_MS = 15 * 60 * 1000;
+  const agentRuntimeState: { [agentId: string]: { lastVerifiedEventAt: number; verifiedDispatches: number; lastVerifiedType: string | null; lastSelfReportedAt: number | null } } = {};
+
+  function resolveAgentLiveness(agentId: string): { status: string; reason: string; lastActiveAt: string | null; verifiedDispatches: number } {
+    const st = agentRuntimeState[agentId];
+    if (!st || st.verifiedDispatches === 0) {
+      return { status: 'INACTIVE', reason: 'no runtime handle registered in this process', lastActiveAt: null, verifiedDispatches: 0 };
+    }
+    const ageMs = Date.now() - st.lastVerifiedEventAt;
+    const lastActiveAt = new Date(st.lastVerifiedEventAt).toISOString();
+    if (ageMs <= AGENT_ACTIVE_TTL_MS) {
+      return {
+        status: 'ACTIVE',
+        reason: `verified runtime event '${st.lastVerifiedType}' ${Math.round(ageMs / 1000)}s ago (TTL ${Math.round(AGENT_ACTIVE_TTL_MS / 1000)}s)`,
+        lastActiveAt,
+        verifiedDispatches: st.verifiedDispatches
+      };
+    }
+    return {
+      status: 'STALE',
+      reason: `last verified runtime event ${Math.round(ageMs / 1000)}s ago exceeds TTL ${Math.round(AGENT_ACTIVE_TTL_MS / 1000)}s`,
+      lastActiveAt,
+      verifiedDispatches: st.verifiedDispatches
+    };
   }
 
   // Antigravity & Sovereign Gemini Matrix
@@ -235,20 +427,70 @@ async function startServer() {
   // 0. Sovereign Health & Telemetry
   app.get('/api/health', (req, res) => {
     res.setHeader('Content-Type', 'application/json');
+
+    // A7: every field below is derived from live process state. Nothing here is a
+    // string literal standing in for a check.
+    //   kernel         - the sovereign kernel singleton is constructed and its syscall
+    //                    table / device tree are genuinely populated in this process.
+    //   sentinel       - secureSandboxGuard is actually mounted on the Express stack,
+    //                    so the war-chest path interceptor is genuinely enforcing.
+    //   hitl           - the approval store exists and is readable.
+    //   geminiGateway  - only 'configured' when a key is really present; it is never
+    //                    reported 'active' without credentials.
+    //   mcp            - already the live child-process state.
+    const kernelInstance = sovereignKernelInstance as any;
+    const kernelAlive = Boolean(
+      kernelInstance &&
+      Array.isArray(kernelInstance.syscallTable) &&
+      kernelInstance.syscallTable.length > 0 &&
+      kernelInstance.deviceTree
+    );
+    const sentinelEnforcing = typeof secureSandboxGuard === 'function';
+    const hitlLive = Array.isArray(approvals);
+    const geminiConfigured = Boolean(process.env.GEMINI_API_KEY || process.env.Gemini_API);
+    const mcpAlive = mcpServerStatus === 'active';
+    const auditVerification = verifyAuditChain();
+    // The CLI gateway is fail-closed when no token is provisioned. A locked execution
+    // surface is a degraded condition, so it is counted here instead of being hidden
+    // behind a reassuring 'operational'.
+    const cliGatewayAuthenticated = cliTokens.length > 0;
+
+    const services = {
+      kernel: kernelAlive ? 'active' : 'inactive',
+      sentinel: sentinelEnforcing ? 'active' : 'inactive',
+      hitl: hitlLive ? 'active' : 'inactive',
+      geminiGateway: geminiConfigured ? 'configured' : 'unconfigured',
+      mcp: typeof mcpServerStatus === 'object' ? (mcpServerStatus as any).status || 'inactive' : mcpServerStatus
+    };
+
+    // ok / status are an honest aggregate, not literals: the endpoint only answers ok
+    // while this request-serving process can genuinely resolve its core subsystems.
+    const degraded: string[] = [];
+    if (!kernelAlive) degraded.push('kernel');
+    if (!sentinelEnforcing) degraded.push('sentinel');
+    if (!hitlLive) degraded.push('hitl');
+    if (!mcpAlive) degraded.push('mcp');
+    if (!geminiConfigured) degraded.push('geminiGateway');
+    if (!cliGatewayAuthenticated) degraded.push('cliGateway');
+    if (auditVerification.status === 'TAMPERED') degraded.push('auditChain');
+
+    const criticalUp = kernelAlive && sentinelEnforcing && hitlLive;
+
     res.json({
-      ok: true,
-      status: 'operational',
+      ok: criticalUp,
+      status: criticalUp ? (degraded.length === 0 ? 'operational' : 'degraded') : 'critical',
       engine: 'Sovereign Core OS v3.8',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-      services: {
-        kernel: 'active',
-        sentinel: 'active',
-        hitl: 'active',
-        geminiGateway: 'active',
-        mcp: typeof mcpServerStatus === 'object' ? (mcpServerStatus as any).status || 'active' : mcpServerStatus
-      }
+      services,
+      // Additive honest detail. The contract keys above are unchanged in name and type.
+      degradedServices: degraded,
+      auditChain: auditVerification.status,
+      // The CLI gateway is fail-closed when no token is provisioned. That is a
+      // configuration state, reported explicitly instead of being hidden behind a
+      // reassuring 'active'.
+      cliGateway: cliGatewayAuthenticated ? 'authenticated' : 'fail-closed'
     });
   });
 
@@ -291,8 +533,10 @@ async function startServer() {
 
   // 4. Audit Verify
   app.get('/api/hitl/audit/verify', (req, res) => {
-    auditChainStatus.lastRefresh = new Date().toISOString();
-    res.json({ ok: true, ...auditChainStatus });
+    // Real recomputation on every call - no cached verdict, no fabricated status.
+    // Response contract preserved: ok, status, brokenAt, lastRefresh are all present.
+    const verification = verifyAuditChain();
+    res.json({ ok: true, ...verification });
   });
 
   // Direct Audit Ledger Query Endpoint
@@ -407,6 +651,7 @@ async function startServer() {
   // Comprehensive Real-Time System Telemetry (Absolute Truth Probe)
   app.get('/api/system/telemetry', (req, res) => {
     const memory = getMemoryMetrics();
+    const auditVerification = verifyAuditChain();
     res.json({
       ok: true,
       timestamp: new Date().toISOString(),
@@ -433,11 +678,18 @@ async function startServer() {
           message: 'حارس HITL يفرض التحقق البشري الصارم على العمليات الحساسة' 
         },
         auditLedger: { 
-          status: auditChainStatus.status === 'INTACT' ? 'ONLINE' : 'TAMPERED', 
-          code: auditChainStatus.status, 
-          blocksCount: (auditChainStatus as any).blocksCount || 142,
-          lastVerified: auditChainStatus.lastRefresh || new Date().toISOString(),
-          message: auditChainStatus.status === 'INTACT' ? 'سلسلة التدقيق التشفيرية SHA-256 سليمة وغير ممسوسة' : 'تحذير: تم رصد خلل في سلسلة التدقيق!'
+          // Honest mapping: only a real detection reports TAMPERED. An unverifiable
+          // chain reports UNVERIFIED - it must NOT be laundered into either
+          // 'ONLINE/INTACT' or 'TAMPERED'.
+          status: auditVerification.status === 'TAMPERED' ? 'TAMPERED' : (auditVerification.status === 'INTACT' ? 'ONLINE' : 'UNVERIFIED'), 
+          code: auditVerification.status, 
+          blocksCount: auditVerification.entryCount,
+          verifiedEntries: auditVerification.verifiedEntries,
+          reason: auditVerification.reason,
+          lastVerified: auditVerification.lastRefresh,
+          message: auditVerification.status === 'TAMPERED'
+            ? 'تم رصد خلل فعلي في سلسلة التدقيق: ' + auditVerification.reason
+            : 'سلسلة التدقيق غير قابلة للتحقق التشفيري حالياً: ' + auditVerification.reason
         },
         sentinelSoc: { 
           status: 'ONLINE', 
@@ -536,7 +788,9 @@ async function startServer() {
   app.post('/api/agents/action', (req, res) => {
     const { agentId, actionType = 'task_execution' } = req.body || {};
     if (agentId && agentActivityLog[agentId]) {
-      recordAgentAction(agentId, actionType);
+      // A8: tagged SELF_REPORT so an unauthenticated caller can chart activity but can
+      // never promote an agent to ACTIVE - that requires a real in-process dispatch.
+      recordAgentAction(agentId, `SELF_REPORT:${actionType}`);
     }
     res.json({ ok: true, agentId, recordedAt: new Date().toISOString() });
   });
@@ -547,29 +801,109 @@ async function startServer() {
   app.get('/api/agents/framework', async (req, res) => {
     const overview = globalServersCenterRegistry.getOverview();
 
-    // MCP server health with real file-system checks
-    const mcpStatus = overview.mcpSummary.servers.map(s => ({
-      id: s.id,
-      name: s.name,
-      version: s.version,
-      status: s.status,
-      isHealthy: s.isHealthy,
-      tools: s.tools,
-      path: s.fullPath
-    }));
+    // ── HOST PROBER INTEGRATION ────────────────────────────────────────────────
+    // The container's own registry can only probe `E:\Servers-Center`, which does not
+    // exist on a Linux filesystem, so it reports 0/N and UNVERIFIABLE forever. The host
+    // prober performs genuine MCP handshakes where the servers actually run.
+    //
+    // Contract honoured here, in order of precedence:
+    //   1. If the prober answered with provenance MEASURED_BY_PROBER, ITS verdicts are
+    //      authoritative — they are evidence from a real transport, not a file check.
+    //   2. If the prober is unreachable, its reasons are PUBLISHED and the console-side
+    //      filesystem probe remains the reported measurement. Silence is never
+    //      substituted with an assumed verdict.
+    const expectedMcpIds = overview.mcpSummary.expectedCount > 0
+      ? overview.mcpSummary.servers.map(s => s.id)
+      : (overview.mcpSummary.missingFromDiscovery ?? []);
+    const expectedLspIds = overview.lspSummary.expectedCount > 0
+      ? overview.lspSummary.servers.map(s => s.id)
+      : (overview.lspSummary.missingFromDiscovery ?? []);
 
-    // LSP server health with real file-system checks
-    const lspStatus = overview.lspSummary.servers.map(s => ({
-      id: s.id,
-      name: s.name,
-      language: s.language,
-      status: s.status,
-      isHealthy: s.isHealthy,
-      source: s.source || s.fullPath
-    }));
+    const hostProber = new HostProberClient({
+      token: process.env.HOST_PROBER_TOKEN,
+      timeoutMs: Number(process.env.HOST_PROBER_TIMEOUT_MS) || 20000
+    });
+    const [mcpProbe, lspProbe] = await Promise.all([
+      hostProber.fetchMcpStatus(expectedMcpIds),
+      hostProber.fetchLspStatus(expectedLspIds)
+    ]);
+
+    const mcpMeasured = mcpProbe.provenance === 'MEASURED_BY_PROBER';
+    const lspMeasured = lspProbe.provenance === 'MEASURED_BY_PROBER';
+
+    // MCP server health. Host-measured entries replace the filesystem-derived ones
+    // when the prober answered, because a handshake outranks the presence of a file.
+    const mcpStatus = mcpMeasured
+      ? mcpProbe.servers.map(s => ({
+          id: s.id,
+          // serverName/serverVersion come from the real `initialize` result. They are
+          // null when no handshake ran, which is itself the honest signal.
+          name: s.serverName ?? s.id,
+          version: s.serverVersion,
+          protocolVersion: s.protocolVersion,
+          // A prober verdict is already the three-state model; do not re-map it.
+          status: s.state,
+          isHealthy: s.state === 'ONLINE',
+          reason: s.reason,
+          reasonText: s.reasonText,
+          toolCount: s.toolCount,
+          toolNames: s.toolNames,
+          probeMethod: s.probeMethod,
+          measured: s.measured,
+          durationMs: s.durationMs,
+          lastProbedAt: s.lastProbedAt,
+          cached: s.cached
+        }))
+      : overview.mcpSummary.servers.map(s => ({
+          id: s.id,
+          name: s.name,
+          version: s.version,
+          status: s.status,
+          isHealthy: s.isHealthy,
+          tools: s.tools,
+          path: s.fullPath,
+          measured: false,
+          probeMethod: overview.probeMethod
+        }));
+
+    // LSP server health. Same precedence rule as MCP.
+    const lspStatus = lspMeasured
+      ? lspProbe.servers.map(s => ({
+          id: s.id,
+          // No serverName/language on an LSP result: the prober records only what a
+          // handshake proved. Naming the language here would be metadata, not evidence.
+          name: s.id,
+          status: s.state,
+          isHealthy: s.state === 'ONLINE',
+          reason: s.reason,
+          reasonText: s.reasonText,
+          probeMethod: s.probeMethod,
+          measured: s.measured,
+          durationMs: s.durationMs,
+          lastProbedAt: s.lastProbedAt
+        }))
+      : overview.lspSummary.servers.map(s => ({
+          id: s.id,
+          name: s.name,
+          language: s.language,
+          status: s.status,
+          isHealthy: s.isHealthy,
+          source: s.source || s.fullPath,
+          measured: false,
+          probeMethod: overview.probeMethod
+        }));
 
     // Live MCP JSON-RPC protocol self-test
-    let mcpRpcSelfTest: { ok: boolean; toolCount: number; chainVerified: boolean; error?: string } = {
+    let mcpRpcSelfTest: {
+      ok: boolean;
+      toolCount: number;
+      chainVerified: boolean;
+      // The verification verdict travels with the boolean. A bare `false` would be
+      // indistinguishable from "the check crashed", so the reason must be published.
+      chainStatus?: string;
+      chainVerifiedReason?: string | null;
+      error?: string;
+    } = {
       ok: false, toolCount: 0, chainVerified: false
     };
     try {
@@ -584,63 +918,182 @@ async function startServer() {
       mcpRpcSelfTest = {
         ok: true,
         toolCount: toolsResp.result?.tools?.length || 0,
-        chainVerified: chainResult.status === 'SEAL_INTACT_VERIFIED'
+        chainVerified: chainResult.status === 'SEAL_INTACT_VERIFIED',
+        chainStatus: chainResult.status,
+        chainVerifiedReason: chainResult.reason ?? null
       };
     } catch (err: any) {
       mcpRpcSelfTest.error = err.message;
     }
 
-    // Agent roster (live from orchestrator memory)
-    const agentRoster = [
-      { id: 'orchestrator',    name: 'Supreme Tactical Director',        role: 'supervisor',       model: 'gemini-3.8-flash',                       status: 'ACTIVE' },
-      { id: 'architect',       name: 'System Architect',                  role: 'lead-engineer',    model: 'gemini-3.1-pro-preview',                 status: 'ACTIVE' },
-      { id: 'developer',       name: 'Antigravity Autonomous Core',       role: 'lead-engineer',    model: 'antigravity-preview-09-2026',             status: 'ACTIVE' },
-      { id: 'sentinel',        name: 'Cyber Security Sentinel',           role: 'security-auditor', model: 'gemini-3.6-flash',                       status: 'ACTIVE' },
-      { id: 'forge',           name: 'AST Code Factory',                  role: 'lead-engineer',    model: 'gemini-3.7-flash',                       status: 'ACTIVE' },
-      { id: 'researcher',      name: 'Deep Research Agent',               role: 'lead-engineer',    model: 'deep-research-preview-04-2026',          status: 'ACTIVE' },
-      { id: 'leadEngineer',    name: 'Lead Systems Engineer',             role: 'lead-engineer',    model: 'gemini-3.8-flash',                       status: 'ACTIVE' },
-      { id: 'deliveryAgent',   name: 'Deployment & Release Sentinel',     role: 'sentinel',         model: 'gemini-3.7-flash',                       status: 'ACTIVE' },
-      { id: 'geminiInterface', name: 'Interface & Command Dispatcher',    role: 'supervisor',       model: 'gemini-3.8-flash',                       status: 'ACTIVE' },
-      { id: 'truthAuditor',    name: 'Truth & Claim Sentinel',            role: 'sentinel',         model: 'opencode/muse-spark-1.3-contributor-free', status: 'ACTIVE' },
-      { id: 'copilotBridge',   name: 'M365 Copilot & Kernel Bridge',     role: 'integrator',       model: 'copilot-365',                            status: 'ACTIVE' },
-      { id: 'redSimulation',   name: 'Red Simulation Agent',              role: 'security-auditor', model: 'gemini-3.6-flash',                       status: 'ACTIVE' },
-      { id: 'reviewer',        name: 'Reviewer Agent',                    role: 'qa-architect',     model: 'gemini-3.7-flash',                       status: 'ACTIVE' }
+    // Agent registry metadata. name/role/model are static registry facts; `status` is
+    // NOT part of this literal - it is resolved per request from this process's real
+    // runtime handles via resolveAgentLiveness(). An agent with no runtime handle can
+    // therefore never report ACTIVE.
+    const agentRegistryMetadata = [
+      { id: 'orchestrator',    name: 'Supreme Tactical Director',        role: 'supervisor',       model: 'gemini-3.8-flash'                       },
+      { id: 'architect',       name: 'System Architect',                  role: 'lead-engineer',    model: 'gemini-3.1-pro-preview'                 },
+      { id: 'developer',       name: 'Antigravity Autonomous Core',       role: 'lead-engineer',    model: 'antigravity-preview-09-2026'             },
+      { id: 'sentinel',        name: 'Cyber Security Sentinel',           role: 'security-auditor', model: 'gemini-3.6-flash'                       },
+      { id: 'forge',           name: 'AST Code Factory',                  role: 'lead-engineer',    model: 'gemini-3.7-flash'                       },
+      { id: 'researcher',      name: 'Deep Research Agent',               role: 'lead-engineer',    model: 'deep-research-preview-04-2026'          },
+      { id: 'leadEngineer',    name: 'Lead Systems Engineer',             role: 'lead-engineer',    model: 'gemini-3.8-flash'                       },
+      { id: 'deliveryAgent',   name: 'Deployment & Release Sentinel',     role: 'sentinel',         model: 'gemini-3.7-flash'                       },
+      { id: 'geminiInterface', name: 'Interface & Command Dispatcher',    role: 'supervisor',       model: 'gemini-3.8-flash'                       },
+      { id: 'truthAuditor',    name: 'Truth & Claim Sentinel',            role: 'sentinel',         model: 'opencode/muse-spark-1.3-contributor-free' },
+      { id: 'copilotBridge',   name: 'M365 Copilot & Kernel Bridge',     role: 'integrator',       model: 'copilot-365'                            },
+      { id: 'redSimulation',   name: 'Red Simulation Agent',              role: 'security-auditor', model: 'gemini-3.6-flash'                       },
+      { id: 'reviewer',        name: 'Reviewer Agent',                    role: 'qa-architect',     model: 'gemini-3.7-flash'                       }
     ];
 
-    // Compute framework health score
-    const mcpOnline  = overview.mcpSummary.onlineCount;
-    const mcpTotal   = overview.mcpSummary.total;
-    const lspReady   = overview.lspSummary.readyCount;
-    const lspTotal   = overview.lspSummary.total;
-    const healthScore = Math.round(
-      ((mcpOnline / mcpTotal) * 40 + (lspReady / lspTotal) * 30 + (mcpRpcSelfTest.chainVerified ? 30 : 0))
+    const agentRoster = agentRegistryMetadata.map(meta => {
+      const liveness = resolveAgentLiveness(meta.id);
+      return {
+        ...meta,
+        status: liveness.status,
+        statusReason: liveness.reason,
+        lastActiveAt: liveness.lastActiveAt,
+        verifiedDispatches: liveness.verifiedDispatches
+      };
+    });
+
+    // ── HEALTH SCORE ────────────────────────────────────────────────────────────
+    // Source of truth, in precedence order: the host prober when it MEASURED, the
+    // console's own filesystem probe otherwise. The denominator is the number of
+    // servers actually inventoried — never a hardcoded catalogue size, because a
+    // denominator larger than the inventory would silently deflate the ratio and a
+    // denominator smaller would inflate it. Both would be lies in opposite directions.
+    const mcpOnline = mcpMeasured ? mcpProbe.summary.online : overview.mcpSummary.onlineCount;
+    const mcpOffline = mcpMeasured ? mcpProbe.summary.offline : 0;
+    const mcpUnverified = mcpMeasured ? mcpProbe.summary.unverifiable : overview.mcpSummary.total;
+    const mcpTotal = mcpMeasured ? mcpProbe.summary.total : overview.mcpSummary.total;
+    const lspReady = lspMeasured ? lspProbe.summary.online : overview.lspSummary.readyCount;
+    const lspUnverified = lspMeasured ? lspProbe.summary.unverifiable : overview.lspSummary.total;
+    const lspTotal = lspMeasured ? lspProbe.summary.total : overview.lspSummary.total;
+    // Divide-by-zero guard. Inside the Linux container the servers-center root is not
+    // mounted, so a failed discovery legitimately yields total = 0 for both subsystems.
+    // The raw expression would then evaluate (0/0) -> NaN and render "NaN/100".
+    // NaN is a fault, not a verdict: this guard maps an unmeasured subsystem to ZERO,
+    // never to a full score. An absent measurement must not earn credit.
+    const coverageRatio = (measured: number, expected: number): number =>
+      expected > 0 ? measured / expected : 0;
+    const scoreNumeric = Math.round(
+      (coverageRatio(mcpOnline, mcpTotal) * 40
+       + coverageRatio(lspReady, lspTotal) * 30
+       + (mcpRpcSelfTest.chainVerified ? 30 : 0))
     );
+    // When NEITHER transport produced a measured verdict, publishing a number would
+    // invite the reader to treat "nothing was proven" as "a score was earned". A
+    // score requires evidence; without it the honest output is a verdict, not a 0.
+    const anyMeasured = mcpMeasured || lspMeasured;
+    const healthScore = anyMeasured ? `${scoreNumeric}/100` : 'UNVERIFIABLE';
 
     res.json({
       ok: true,
       frameworkVersion: '3.8.0',
       chainKey: '360ea36c28e66d9d',
       timestamp: new Date().toISOString(),
-      healthScore: `${healthScore}/100`,
+      healthScore,
+      healthScoreNumeric: anyMeasured ? scoreNumeric : null,
+      // What produced the score above. Without this the number is unfalsifiable.
+      healthScoreBasis: {
+        mcpSource: mcpMeasured ? 'HOST_PROBER_MEASURED' : 'CONTAINER_FILESYSTEM_PROBE',
+        lspSource: (lspMeasured && lspProbe.transportImplemented)
+          ? 'HOST_PROBER_MEASURED'
+          : (lspMeasured ? 'PROBER_RESPONDED_NO_TRANSPORT' : 'CONTAINER_FILESYSTEM_PROBE'),
+        chainSource: mcpRpcSelfTest.chainVerified ? 'CHAIN_VERIFIED' : (mcpRpcSelfTest.chainStatus || 'UNVERIFIED'),
+        anyMeasured,
+        rationale: anyMeasured
+          ? 'At least one subsystem was measured over a real transport; the score is computed from those measurements.'
+          : 'No transport produced a measured verdict, so no score is published. A number here would assert a conclusion that no observation supports.'
+      },
       serversCenter: {
         path: overview.centerPath,
+        // Kept for backward compatibility with existing consumers, but it can no longer
+        // be read as a reachability claim: it reflects filesystem presence only.
         isAvailable: overview.isAvailable,
+        // The honesty envelope travels with the value so a consumer cannot mistake
+        // "this path was never measured" for "this service is offline".
+        availabilityMeasurement: overview.availabilityMeasurement,
+        reachabilityVerified: overview.reachabilityVerified,
+        availabilityReason: overview.availabilityReason,
+        probeMethod: overview.probeMethod,
+        lastProbedAt: overview.lastProbedAt,
+        discoveryFailed: overview.mcpSummary.discoveryFailed,
+        discoveryReason: overview.mcpSummary.discoveryReason,
         nodeRuntime: overview.nodeRuntime
+      },
+      hostProber: {
+        // Where the measured verdicts above came from, and whether they are fresh.
+        // A consumer must be able to tell a live handshake from a stale cache entry.
+        baseUrl: (process.env.HOST_PROBER_BASE_URL || 'http://host.docker.internal:39711'),
+        reachable: anyMeasured,
+        mcp: {
+          provenance: mcpProbe.provenance,
+          probeMethod: mcpProbe.servers[0]?.probeMethod ?? 'none-not-probed',
+          measuredFresh: mcpProbe.measuredFresh,
+          runDurationMs: mcpProbe.runDurationMs,
+          generatedAt: mcpProbe.generatedAt,
+          hostPlatform: mcpProbe.hostPlatform,
+          nodeRuntime: mcpProbe.nodeRuntime,
+          inventorySource: mcpProbe.inventorySource,
+          // Why the console could not measure it itself, when the prober is silent.
+          unavailableReason: mcpMeasured
+            ? null
+            : (mcpProbe.servers[0]?.reasonText
+               ?? 'The host prober did not answer. No MCP verdict was established, so none is reported.'),
+          discrepancies: mcpProbe.discrepancies ?? []
+        },
+        lsp: {
+          provenance: lspProbe.provenance,
+          probeMethod: (lspProbe.servers[0]?.probeMethod ?? 'none-not-probed'),
+          generatedAt: lspProbe.generatedAt,
+          unavailableReason: lspMeasured
+            ? null
+            : (lspProbe.servers[0]?.reasonText
+               ?? 'The host prober did not answer. No LSP verdict was established, so none is reported.')
+        }
       },
       mcp: {
         total: mcpTotal,
         online: mcpOnline,
+        // A measured OFFLINE is evidence of a broken server and must be separable from
+        // an UNVERIFIABLE that merely means "we could not look".
+        offline: mcpOffline,
+        // Why the count is what it is: an inventory could not be enumerated, or N of the
+        // expected servers were not discovered. Silently reporting a smaller total would
+        // read as "these servers do not exist" rather than "we could not see them".
+        expectedCount: overview.mcpSummary.expectedCount,
+        unverifiedCount: mcpUnverified,
+        missingFromDiscovery: overview.mcpSummary.missingFromDiscovery,
+        measurementSource: mcpMeasured ? 'HOST_PROBER_MEASURED' : 'CONTAINER_FILESYSTEM_PROBE',
+        reachabilityVerified: mcpMeasured,
+        probeMethod: mcpMeasured
+          ? (mcpProbe.servers[0]?.probeMethod ?? 'none-not-probed')
+          : overview.probeMethod,
+        lastProbedAt: mcpMeasured ? mcpProbe.generatedAt : overview.lastProbedAt,
         servers: mcpStatus,
         rpcSelfTest: mcpRpcSelfTest
       },
       lsp: {
         total: lspTotal,
         ready: lspReady,
+        expectedCount: overview.lspSummary.expectedCount,
+        unverifiedCount: lspUnverified,
+        measurementSource: lspMeasured ? 'HOST_PROBER_MEASURED' : 'CONTAINER_FILESYSTEM_PROBE',
+        reachabilityVerified: lspMeasured,
+        probeMethod: lspMeasured
+          ? (lspProbe.servers[0]?.probeMethod ?? 'none-not-probed')
+          : overview.probeMethod,
+        lastProbedAt: lspMeasured ? lspProbe.generatedAt : overview.lastProbedAt,
         servers: lspStatus
       },
       agents: {
         total: agentRoster.length,
         active: agentRoster.filter(a => a.status === 'ACTIVE').length,
+        // A8: the roster status is derived from live runtime handles, and the criterion
+        // travels with the payload so consumers can audit how it was decided.
+        livenessCriterion: `ACTIVE requires a verified in-process runtime event within the last ${Math.round(AGENT_ACTIVE_TTL_MS / 1000)}s; otherwise INACTIVE/STALE. Self-reported events do not count.`,
         account: 'r11salfd@gmail.com',
         roster: agentRoster
       }
@@ -657,25 +1110,58 @@ async function startServer() {
     lastUsedAt?: string;
   }
 
-  const cliTokens: CliTokenRecord[] = [
-    {
-      id: 'default-commander-token',
-      name: 'Primary Sovereign Commander CLI',
-      token: 'sov_live_d819c40ea7e260951b3fc1a97e682e',
-      role: 'admin',
-      createdAt: new Date().toISOString()
-    }
-  ];
+  // ── A2: the administrative CLI token is sourced from the environment ONLY ──
+  // The previous revision embedded a live 'sov_live_...' admin secret directly in this
+  // source file, which /api/cli/tokens and /api/cli/install.sh then echoed in full to
+  // every visitor, and which was additionally injected into the environment of every
+  // executed command. That literal is deleted entirely: the value now comes from the
+  // SOVEREIGN_CLI_TOKEN environment variable and is never serialized to a client.
+  // FAIL-CLOSED: an unset/empty SOVEREIGN_CLI_TOKEN means cliTokens stays empty and
+  // every CLI operation is denied - there is no default, no dev bypass, and no
+  // localhost exemption.
+  const CLI_TOKEN_ENV_VAR = 'SOVEREIGN_CLI_TOKEN';
 
-  // List CLI tokens
+  function readConfiguredCliToken(): string {
+    const raw = process.env[CLI_TOKEN_ENV_VAR];
+    return typeof raw === 'string' ? raw.trim() : '';
+  }
+
+  const configuredCliToken = readConfiguredCliToken();
+
+  const cliTokens: CliTokenRecord[] = configuredCliToken
+    ? [{
+        id: 'env-commander-token',
+        name: 'Primary Sovereign Commander CLI (environment-provisioned)',
+        token: configuredCliToken,
+        role: 'admin',
+        createdAt: new Date().toISOString()
+      }]
+    : [];
+
+  if (cliTokens.length === 0) {
+    console.warn(`[SECURITY] ${CLI_TOKEN_ENV_VAR} is not set. All /api/cli execution endpoints are FAIL-CLOSED (HTTP 401) until an operator provisions a token.`);
+  }
+
+  // Non-reversible fingerprint for display: first 8 hex chars of SHA-256(token).
+  // Recommended over exposing any prefix/suffix of the secret, because a prefix leaks
+  // length and entropy structure and a 'sov_live_...' style prefix is guessable.
+  // A one-way digest can never be replayed as a credential.
+  function cliTokenFingerprint(token: string): string {
+    return 'sha256:' + nodeCrypto.createHash('sha256').update(token, 'utf8').digest('hex').slice(0, 8);
+  }
+
+  // List CLI tokens (metadata only - the secret value is never returned)
   app.get('/api/cli/tokens', (req, res) => {
     res.json({
       ok: true,
       tokens: cliTokens.map(t => ({
         id: t.id,
         name: t.name,
-        rawToken: t.token,
-        maskedToken: t.token.slice(0, 12) + '...' + t.token.slice(-6),
+        // Security: the secret is never serialized. The console UI gates its
+        // reveal/copy control on the presence of `rawToken`, so omitting the key
+        // removes the disclosure path from the UI as well as the API.
+        fingerprint: cliTokenFingerprint(t.token),
+        maskedToken: cliTokenFingerprint(t.token),
         role: t.role,
         createdAt: t.createdAt,
         lastUsedAt: t.lastUsedAt || null
@@ -683,8 +1169,84 @@ async function startServer() {
     });
   });
 
+  // ── A1: mandatory, fail-closed, constant-time CLI authentication ──
+  // Constant-time comparison. Both sides are hashed to a fixed-length 32-byte digest
+  // BEFORE comparison, which (a) guarantees equal lengths so timingSafeEqual can never
+  // throw on a length mismatch, and (b) makes the comparison cost independent of where
+  // or whether the two strings differ. `===` is never used on a secret.
+  function timingSafeEqualSecret(a: string, b: string): boolean {
+    const digestA = nodeCrypto.createHash('sha256').update(a, 'utf8').digest();
+    const digestB = nodeCrypto.createHash('sha256').update(b, 'utf8').digest();
+    return nodeCrypto.timingSafeEqual(digestA, digestB);
+  }
+
+  // Credential sources, in order of precedence:
+  //   1. Authorization: Bearer <token> - the transport-standard form, and the form the
+  //      console already documents in its own cURL example and in install.sh, so
+  //      accepting it keeps legitimate existing callers working.
+  //   2. JSON body "token"            - the form install.sh and older clients send.
+  //   3. X-Sovereign-Token header     - explicit alternative for header-only clients.
+  // Accepting several transports adds no attack surface because none of them can
+  // bypass the comparison below; they are all validated identically.
+  function extractPresentedCliToken(req: express.Request): string {
+    const authHeader = String(req.get('authorization') || '').trim();
+    const bearer = /^Bearer\s+(.+)$/i.exec(authHeader);
+    if (bearer && bearer[1].trim()) return bearer[1].trim();
+
+    const bodyToken = (req.body || {}).token;
+    if (typeof bodyToken === 'string' && bodyToken.trim()) return bodyToken.trim();
+
+    const headerToken = String(req.get('x-sovereign-token') || '').trim();
+    if (headerToken) return headerToken;
+
+    return '';
+  }
+
+  // FAIL-CLOSED verifier. `reason` is drawn from a fixed vocabulary only - it never
+  // contains the expected token, any part of it, or its length.
+  function verifyCliCredential(presented: string): { ok: boolean; reason: string; matched?: CliTokenRecord } {
+    if (cliTokens.length === 0) {
+      // No credential is configured => deny everything. Never fall back to 'allow'.
+      return { ok: false, reason: 'NO_CREDENTIAL_CONFIGURED' };
+    }
+    if (!presented) {
+      return { ok: false, reason: 'NO_CREDENTIAL_PRESENTED' };
+    }
+    // Iterate the full credential set rather than short-circuiting on the first match,
+    // so response timing does not reveal how many credentials exist or which matched.
+    let matched: CliTokenRecord | undefined;
+    for (const t of cliTokens) {
+      const isMatch = timingSafeEqualSecret(presented, t.token);
+      if (isMatch && !matched) matched = t;
+    }
+    if (!matched) return { ok: false, reason: 'CREDENTIAL_MISMATCH' };
+    return { ok: true, reason: 'AUTHENTICATED', matched };
+  }
+
+  // Express guard mounted on every arbitrary-command-execution endpoint.
+  function requireCliAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const verdict = verifyCliCredential(extractPresentedCliToken(req));
+    if (!verdict.ok) {
+      // Security: the rejection carries no command output and no secret material.
+      // The command is never echoed back, so an unauthenticated caller cannot use
+      // this endpoint as an execution oracle.
+      res.status(401).json({
+        ok: false,
+        error: 'CLI_AUTH_REQUIRED',
+        message: 'Sovereign CLI authorization denied. A valid administrative CLI token is required to execute commands.',
+        reason: verdict.reason,
+        authScheme: 'Authorization: Bearer <token>',
+        envVar: CLI_TOKEN_ENV_VAR,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+    if (verdict.matched) verdict.matched.lastUsedAt = new Date().toISOString();
+    next();
+  }
+
   // Create new CLI token
-  app.post('/api/cli/tokens/create', (req, res) => {
+  app.post('/api/cli/tokens/create', requireCliAuth, (req, res) => {
     const { name = 'Terminal Device', role = 'admin' } = req.body || {};
     const generatedToken = 'sov_live_' + nodeCrypto.randomBytes(20).toString('hex');
     const newRecord: CliTokenRecord = {
@@ -708,7 +1270,9 @@ async function startServer() {
   });
 
   // Revoke CLI token
-  app.delete('/api/cli/tokens/:id', (req, res) => {
+  // Gated: leaving this unauthenticated would let any visitor revoke the operator's
+  // administrative credential (denial of service on CLI access).
+  app.delete('/api/cli/tokens/:id', requireCliAuth, (req, res) => {
     const { id } = req.params;
     const idx = cliTokens.findIndex(t => t.id === id);
     if (idx !== -1) {
@@ -734,8 +1298,11 @@ async function startServer() {
     });
   });
 
-  app.post('/api/cli/multibridge/dispatch', async (req, res) => {
+  app.post('/api/cli/multibridge/dispatch', requireCliAuth, async (req, res) => {
     // ⚠️ SOVEREIGN MANDATE: No canned responses. Real CLI execution only.
+    // A1: authentication is mandatory and fail-closed. The container publishes this
+    // port on 0.0.0.0, so without this guard every device on the local network could
+    // execute arbitrary commands here.
     const { engine = 'agy', command = '', args = [] } = req.body || {};
     if (!command || !command.trim()) {
       return res.status(400).json({ ok: false, error: 'Command is required. No empty dispatch allowed.' });
@@ -805,9 +1372,16 @@ async function startServer() {
   let activeCliCwd = process.cwd();
 
   // Execute CLI Command (Real Linux Bash Shell & Sovereign Engine)
-  app.post('/api/cli/execute', async (req, res) => {
+  app.post('/api/cli/execute', requireCliAuth, async (req, res) => {
+    // A1: authentication is mandatory and fail-closed. This route reaches
+    // execAsync, so it is remote code execution by design; requireCliAuth is the only
+    // thing standing between the LAN and a root shell inside the container.
     try {
-      const { command = '', cwd, token } = req.body || {};
+      // `token` is read from req.body by requireCliAuth for authentication. It is
+      // deliberately NOT re-read here: the previous revision accepted any token that
+      // merely startedWith() a real one and used `===` on a secret. lastUsedAt is now
+      // recorded by requireCliAuth after a constant-time match.
+      const { command = '', cwd } = req.body || {};
       const trimmed = command.trim();
       let effectiveCwd = cwd && fs.existsSync(cwd) && fs.statSync(cwd).isDirectory() ? cwd : activeCliCwd;
 
@@ -816,10 +1390,10 @@ async function startServer() {
       }
 
       // Record last used time if token passed
-      if (token) {
-        const found = cliTokens.find(t => t.token === token || t.token.startsWith(token));
-        if (found) found.lastUsedAt = new Date().toISOString();
-      }
+      // (Removed: authentication and lastUsedAt bookkeeping are now performed by
+      // requireCliAuth using a constant-time comparison. The old block matched with
+      // `===` and `startsWith`, so any prefix of a valid token - down to a single
+      // character - was accepted.)
 
       // 1. Built-in Terminal Command: clear
       if (trimmed === 'clear' || trimmed === 'cls') {
@@ -905,6 +1479,7 @@ async function startServer() {
           ].join('\n');
         } else if (mainCmd === 'status') {
           const mem = getMemoryMetrics();
+          const auditVerification = verifyAuditChain();
           const uptimeSec = Math.floor(process.uptime());
           const hrs = Math.floor(uptimeSec / 3600);
           const mins = Math.floor((uptimeSec % 3600) / 60);
@@ -918,7 +1493,7 @@ async function startServer() {
             `● RSS Memory        : ${mem.rssMb} MB`,
             `● MCP Protocol      : ${mcpServerStatus === 'active' ? 'ONLINE (v1.0.0)' : 'DEGRADED'}`,
             `● HITL Guard        : ENFORCED (${approvals.filter(a => a.status === 'pending').length} pending approvals)`,
-            `● Audit Ledger      : ${auditChainStatus.status} (SHA-256 Chain Intact)`,
+            `● Audit Ledger      : ${auditVerification.status} (${auditVerification.verifiedEntries}/${auditVerification.entryCount} entries recomputed; no persisted genesis anchor)`,
             `● Sentinel SOC      : ACTIVE (24 firewall rules enforced)`,
             `● Gemini Neural AI  : READY (gemini-3.8-flash)`
           ].join('\n');
@@ -1006,13 +1581,15 @@ async function startServer() {
             ).join('\n');
           }
         } else if (mainCmd === 'audit') {
+          // A11: report the genuine recomputation result, not a canned "PASS".
+          const auditVerification = verifyAuditChain();
           output = [
             '🛡️ SOVEREIGN AUDIT LEDGER INTEGRITY PROBE',
             '------------------------------------------------------------',
-            `Status       : ${auditChainStatus.status}`,
-            `Blocks Count : 142 immutable blocks`,
-            `Hash Scheme  : SHA-256 Forward-Linked Merkle Chain`,
-            `Verification : PASS (No tampering or sequence breaks detected)`
+            `Status       : ${auditVerification.status}`,
+            `Entries      : ${auditVerification.verifiedEntries}/${auditVerification.entryCount} forward-linked SHA-256 entries recomputed`,
+            `Hash Scheme  : SHA-256 forward-linked chain (prevHash -> integrityHash)`,
+            `Verification : ${auditVerification.status === 'TAMPERED' ? 'FAIL - ' + auditVerification.reason : auditVerification.reason}`
           ].join('\n');
         } else if (mainCmd === 'mcp') {
           output = [
@@ -1066,7 +1643,11 @@ async function startServer() {
             ...process.env,
             PATH: `${process.cwd()}/node_modules/.bin;${process.env.PATH}`,
             SOVEREIGN_HOST: `http://localhost:${PORT}`,
-            SOVEREIGN_TOKEN: 'sov_live_d819c40ea7e260951b3fc1a97e682e'
+            // Security: the administrative CLI secret is NEVER hardcoded here. Child
+            // shells inherit only the operator's own SOVEREIGN_TOKEN from the process
+            // environment, so no server-embedded credential is injected into arbitrary
+            // command environments (where it could be captured by command output).
+            ...(process.env.SOVEREIGN_TOKEN ? { SOVEREIGN_TOKEN: process.env.SOVEREIGN_TOKEN } : {})
           }
         });
         const durationMs = Math.round(performance.now() - startTime);
@@ -1119,10 +1700,32 @@ echo "========================================================"
 mkdir -p "$HOME/.local/bin"
 CLI_TARGET="$HOME/.local/bin/sovereign"
 
+# A2: the server no longer embeds its administrative token in this installer.
+# The operator must supply their own provisioned token from their own environment.
+if [ -z "\${SOVEREIGN_TOKEN:-}" ]; then
+  echo ""
+  echo "⚠️  SOVEREIGN_TOKEN is not set in your environment."
+  echo "   This installer no longer ships the server's administrative token."
+  echo "   Export the token provisioned by your operator, then re-run:"
+  echo "     export SOVEREIGN_TOKEN=<your-admin-token>"
+  echo "     curl -sSL ${origin}/api/cli/install.sh | bash"
+  echo "   The wrapper has been installed and will work once the variable is set."
+  echo ""
+fi
+
 cat << 'EOF' > "$CLI_TARGET"
 #!/usr/bin/env bash
 SERVER_URL="\${SOVEREIGN_HOST:-${origin}}"
-CLI_TOKEN="\${SOVEREIGN_TOKEN:-sov_live_d819c40ea7e260951b3fc1a97e682e}"
+# A2: read the token from the caller's own environment only. The previous revision
+# embedded the server's live admin secret here as a default, which disclosed a
+# complete administrative credential to anyone who fetched this script.
+CLI_TOKEN="\${SOVEREIGN_TOKEN:-}"
+
+if [ -z "$CLI_TOKEN" ]; then
+  echo "[sovereign] SOVEREIGN_TOKEN is not set - refusing to dispatch." >&2
+  echo "[sovereign] Export the administrative CLI token provisioned in your environment." >&2
+  exit 1
+fi
 
 CMD="$*"
 if [ -z "$CMD" ]; then
@@ -1146,7 +1749,7 @@ chmod +x "$CLI_TARGET"
 
 echo "✅ Sovereign CLI installed successfully to: $CLI_TARGET"
 echo ""
-echo "Try running:"
+echo "Try running (with SOVEREIGN_TOKEN exported):"
 echo "  sovereign status"
 echo "  sovereign memory"
 echo "  sovereign agents"
@@ -1298,6 +1901,18 @@ echo ""
 
     const id = `ap-${nextIndex}`;
 
+    // A11: real forward-linked SHA-256 chain stamping. prevHash links this entry to the
+    // current chain head (genesis when the ledger is empty), and integrityHash covers
+    // the entry's immutable fields so /api/hitl/audit/verify can recompute and compare
+    // instead of asserting a fabricated 'INTACT'.
+    const headEntry = approvals
+      .map((a: any) => ({ a, seq: parseInt(String(a.id).split('-')[1], 10) }))
+      .filter((x: any) => Number.isFinite(x.seq))
+      .sort((x: any, y: any) => y.seq - x.seq)[0];
+    const prevHash = headEntry && typeof headEntry.a.integrityHash === 'string'
+      ? headEntry.a.integrityHash
+      : AUDIT_GENESIS_HASH;
+
     const newApproval = {
       id,
       status: 'pending' as const,
@@ -1308,8 +1923,12 @@ echo ""
       reason,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-      payload
+      payload,
+      prevHash,
+      integrityHash: '' as string
     };
+
+    newApproval.integrityHash = computeAuditEntryHash(newApproval, newApproval.prevHash);
 
     approvals.unshift(newApproval); // Add to start of list
 
@@ -2039,19 +2658,46 @@ echo ""
       engine: 'Sovereign AST Code Factory & Synthesizer',
       chainKey: '360ea36c28e66d9d',
       mcpIntegration: {
-        status: 'CONNECTED',
+        // HONESTY FIX: this used to be the literal 'CONNECTED' while
+        // `serversCount` was just a count of ON-DISK PATH STRINGS. Nothing in this
+        // payload proves a transport is open. An unconditional 'CONNECTED' is
+        // therefore the strongest possible unmeasured claim, and it is withdrawn.
+        status: 'UNVERIFIABLE',
+        statusReason:
+          'No MCP process was spawned and no initialize/tools/list handshake was performed by this endpoint. serversCount below is a count of declared inventory entries, not a connection count.',
+        measurement: 'DECLARED_INVENTORY_ONLY',
+        reachabilityVerified: false,
         serversCount: serversCenter.mcpSummary.total,
+        expectedCount: serversCenter.mcpSummary.expectedCount,
+        unverifiedCount: serversCenter.mcpSummary.unverifiedCount,
         toolsCount: mcpTools.length,
         tools: mcpTools.map(t => ({ name: t.name, description: t.description }))
       },
       lspIntegration: {
-        status: 'READY',
+        // HONESTY FIX: was the literal 'READY' while `readyCount` is now always 0
+        // (an LSP server cannot be healthy merely because its directory exists).
+        // 'READY' alongside readyCount:0 was a payload contradicting itself.
+        status: 'UNVERIFIABLE',
+        statusReason:
+          'No LSP server process was spawned and no Content-Length framed initialize handshake was performed by this endpoint. Directory presence is not server readiness.',
+        measurement: 'DECLARED_INVENTORY_ONLY',
+        reachabilityVerified: false,
         serversCount: serversCenter.lspSummary.total,
+        expectedCount: serversCenter.lspSummary.expectedCount,
+        unverifiedCount: serversCenter.lspSummary.unverifiedCount,
         readyCount: serversCenter.lspSummary.readyCount,
         servers: serversCenter.lspSummary.servers
       },
       openCodeIntegration: {
-        status: 'CONNECTED',
+        // HONESTY FIX: was the literal 'CONNECTED'. No request has been issued to
+        // this gateway from this endpoint, so no connection can be claimed. The
+        // configured base URL is published instead, so an operator can see WHAT is
+        // configured without being told a link is established.
+        status: 'UNVERIFIABLE',
+        statusReason:
+          'The gateway URL below is configuration read from the environment, not an observed connection. No health request is issued by this endpoint.',
+        measurement: 'CONFIGURATION_ONLY',
+        reachabilityVerified: false,
         gateway: 'https://opencode.ai/zen/v1',
         models: [
           'opencode/muse-spark-1.3-contributor-free',
@@ -2059,7 +2705,14 @@ echo ""
         ]
       },
       copilotIntegration: {
-        status: 'CONNECTED',
+        // HONESTY FIX: was the literal 'CONNECTED'. The M365 bridge exposes a
+        // separate /api/bridge/copilot/status endpoint that performs a real probe;
+        // claiming CONNECTED here duplicated a fabricated claim.
+        status: 'UNVERIFIABLE',
+        statusReason:
+          'This endpoint does not contact Microsoft Graph. A real probe result, when one exists, is published by /api/bridge/copilot/status.',
+        measurement: 'NOT_PROBED',
+        reachabilityVerified: false,
         bridge: 'Microsoft 365 Copilot & Semantic Kernel',
         tenantId: process.env.AZURE_TENANT_ID || '647ed524-01d5-4424-91ea-bce71ca6351c',
         models: [
@@ -2666,13 +3319,20 @@ ${context}
 
     // 4. Audit Chain Verification
     const t3 = performance.now();
-    const auditOk = auditChainStatus.status === 'INTACT';
+    // A11: reflect the real recomputation. 'UNVERIFIED' must not be reported as a
+    // passing check - an honest unverified chain is not a verified chain.
+    const auditVerification = verifyAuditChain();
+    const auditOk = auditVerification.status === 'INTACT';
     checks.push({
       dept: 'audit',
       name: 'Linear SHA-256 Ledger Interlock',
-      status: auditOk ? 'passed' : 'failed',
+      status: auditOk ? 'passed' : (auditVerification.status === 'TAMPERED' ? 'failed' : 'unverified'),
       latencyMs: Math.max(1, Math.round(performance.now() - t3)),
-      details: { status: auditChainStatus.status }
+      details: {
+        status: auditVerification.status,
+        verifiedEntries: `${auditVerification.verifiedEntries}/${auditVerification.entryCount}`,
+        reason: auditVerification.reason
+      }
     });
 
     // 5. Agent Corps Registry

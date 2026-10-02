@@ -6,6 +6,14 @@ under strict Sovereign Governance Active controls.
 
 Authority: Supreme Sovereign Commander
 Chain Key ID: 360ea36c28e66d9d
+
+Subprocess audit note (Chain Key 360ea36c28e66d9d): this runner invokes each
+suite as an ARGUMENT LIST, `[sys.executable, script_path]`, with no `shell=True`
+and no string command. It was therefore already free of the
+`shell=True`-with-a-list defect found in the MCP and Servers Center harnesses,
+and no quoting or injection change was required here. The hardening applied to
+this file is the per-suite TIMEOUT below, which converts an indefinitely hanging
+suite into an attributed, explicit failure.
 """
 
 from __future__ import annotations
@@ -22,6 +30,21 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 CHAIN_KEY_ID = "360ea36c28e66d9d"
+
+# ── PER-SUITE TIMEOUT (Chain Key 360ea36c28e66d9d) ────────────────────────────
+# FORENSIC FINDING: `subprocess.run` here was called with NO `timeout`. A suite
+# that hangs - waiting on an unreachable network endpoint, a stalled child
+# process, or an interactive prompt - would therefore hang the master runner
+# indefinitely. In CI that burns the whole runner budget and, because the job
+# never reaches a failure, the run is eventually killed by the platform timeout
+# with no per-suite attribution. A hung suite is a FAILED suite, and must be
+# reported as one with its name attached.
+#
+# This is NOT the same as the subprocess-injection class of defect: this file
+# already invoked suites correctly as an ARGUMENT LIST (`[sys.executable,
+# script_path]`) with no `shell=True`, so there was nothing to remove here.
+# Verified by inspection - see the audit note in this module's docstring.
+SUITE_TIMEOUT_SECONDS = 300
 
 @dataclass
 class SuiteTarget:
@@ -105,14 +128,27 @@ def main() -> int:
         print(f"    Intent: {suite.description}")
 
         t0 = time.perf_counter()
-        proc = subprocess.run(
-            [sys.executable, script_path],
-            cwd=root_dir,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, script_path],
+                cwd=root_dir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=SUITE_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            duration_ms = (time.perf_counter() - t0) * 1000.0
+            failed_count += 1
+            msg = (
+                f"HUNG: suite exceeded the {SUITE_TIMEOUT_SECONDS}s per-suite "
+                f"timeout and was terminated. A hung suite is a failed suite."
+            )
+            results.append((suite.name, False, duration_ms, msg))
+            print(f"    ❌ FAILED (TIMEOUT after {SUITE_TIMEOUT_SECONDS}s, {duration_ms:.1f}ms)")
+            print(f"    Error Output:\n{msg}")
+            continue
         duration_ms = (time.perf_counter() - t0) * 1000.0
 
         if proc.returncode == 0:

@@ -12,7 +12,27 @@ Suites:
 import sys
 import os
 import json
+import shutil
 import subprocess
+
+
+def _resolve_npx():
+    """Resolve the real npx launcher for the current platform.
+
+    WHY THIS IS NECESSARY: with `shell=False` the OS performs the lookup, and on
+    Windows `npx` is actually `npx.CMD` (plus a `npx.ps1` shim). Resolving the
+    bare name `npx` therefore fails with WinError 2 on Windows. This is exactly
+    why the old `shell=True` invocation appeared to work on a Windows
+    workstation while failing on Linux CI: the shell was doing the extension
+    resolution. `shutil.which` performs the same resolution WITHOUT spawning a
+    shell, so the injection surface stays closed on every platform.
+    """
+    for candidate in ("npx", "npx.cmd", "npx.exe"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
 
 # Ensure UTF-8 output on Windows
 if sys.platform == 'win32':
@@ -131,13 +151,40 @@ def test_live_jsonrpc_execution():
         return False
 
     try:
-        cmd = f'npx tsx "{runner_path}"'
+        # ── COMMAND-INJECTION FIX (Chain Key 360ea36c28e66d9d) ──────────────────
+        # FORENSIC FINDING: this previously ran
+        #     cmd = f'npx tsx "{runner_path}"'
+        #     subprocess.run(cmd, ..., shell=True)
+        # Two distinct defects, only one of which is obvious:
+        #   (a) INJECTION SURFACE - with shell=True the command string is handed
+        #       to the system shell, so any shell metacharacter reaching
+        #       `runner_path` executes. The quoted f-string only *moved* the
+        #       risk; it never removed it.
+        #   (b) WRONG SEMANTICS ON POSIX - CPython does not execute a list with
+        #       shell=True directly; it hands it to the shell, which then treats
+        #       the first element as `$0` and the rest as positional parameters.
+        #       The invocation degenerates to `/bin/sh -c npx tsx <path>`, where
+        #       `npx` runs with NO arguments. That is the actual cause of the
+        #       Linux CI failures recorded in runs #34/#35 - not a flaky test.
+        #
+        # CORRECT FIX: `shell=False` (the default) with an ARGUMENT LIST. No
+        # shell is spawned, so no quoting or escaping is required and no
+        # metacharacter can be interpreted. This is correct on Windows, POSIX and
+        # anywhere else, because there is no shell to disagree about parsing.
+        #
+        # The launcher is resolved with shutil.which() because `npx` is a `.CMD`
+        # shim on Windows and a bare `npx` would not resolve under shell=False.
+        npx = _resolve_npx()
+        if not npx:
+            print("  [FAIL] Unable to locate the 'npx' launcher on PATH.")
+            print("         Install Node.js (npx ships with it) before running this suite.")
+            return False
         proc = subprocess.run(
-            cmd,
+            [npx, "tsx", runner_path],
             capture_output=True,
             text=True,
             check=True,
-            shell=True
+            shell=False
         )
         output = proc.stdout.strip()
         lines = [line for line in output.split("\n") if line.startswith("[{")]
@@ -155,7 +202,20 @@ def test_live_jsonrpc_execution():
 
         return all_passed
     except subprocess.CalledProcessError as e:
-        print(f"  [FAIL] Error running live MCP test via tsx: {e.stderr}")
+        # ── DIAGNOSTIC FIX (Chain Key 360ea36c28e66d9d) ────────────────────────
+        # FORENSIC FINDING: the old handler printed `e.stderr` only. The runner
+        # writes its per-test verdict to STDOUT, so a failing subprocess printed
+        # an EMPTY error message and hid the very evidence needed to diagnose
+        # the failure. Both streams are now surfaced.
+        print(f"  [FAIL] Error running live MCP test via tsx (exit code {e.returncode})")
+        if e.stdout:
+            print("  ---- runner stdout ----")
+            for line in str(e.stdout).strip().split("\n"):
+                print(f"  {line}")
+        if e.stderr:
+            print("  ---- runner stderr ----")
+            for line in str(e.stderr).strip().split("\n"):
+                print(f"  {line}")
         return False
     except Exception as e:
         print(f"  [FAIL] Unexpected error: {e}")

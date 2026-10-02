@@ -14,7 +14,8 @@ import {
   Laptop,
   Folder,
   Clock,
-  Server
+  Server,
+  AlertCircle
 } from 'lucide-react';
 import { getGoogleAuthHeaders } from '../firebase';
 import ServersCenterPanel from '../components/ServersCenterPanel';
@@ -45,11 +46,30 @@ export default function DeveloperPage() {
   // Real Terminal & Shell State
   const [currentCwd, setCurrentCwd] = useState<string>('/app/applet');
   const [terminalInput, setTerminalInput] = useState('');
+  /**
+   * UI TRUTH NOTE (Chain Key 360ea36c28e66d9d)
+   * ---------------------------------------------------------------------------
+   * This seed is a LABELLLED PLACEHOLDER, not a measurement. The previous
+   * revision printed `Node.js: v22.23.2 (Production Environment Active)` and a
+   * `MCP Protocol : ONLINE` banner as if they were captured telemetry. They
+   * were authored strings: nothing had been executed, nothing had been probed,
+   * and in the container the real runtime is a different version entirely.
+   *
+   * Doctrine (AGENTS.md §5, Anti-Simulation & Anti-Fabrication Mandate): a
+   * plausible-looking number with no physical evidence behind it is worse than
+   * an honest "not measured". So the seed now states exactly what it is, and
+   * every real reading appears only after an actual `/api/cli/execute` round
+   * trip. Operator: run `node -v` in the terminal above to measure the runtime.
+   */
   const [commandHistory, setCommandHistory] = useState<CommandHistoryItem[]>([
     {
       id: 'welcome',
       command: 'uname -a && node -v',
-      output: 'Linux sovereign-sandbox 6.6.0-x86_64 GNU/Linux\nNode.js: v22.23.2 (Production Environment Active)',
+      output: [
+        '(لم يُنفَّذ أي أمر بعد — هذا سجل مبدئي مُعلَّم وليس ناتج تنفيذ حقيقي.)',
+        'حالة القياس: إصدار Node.js غير مقيس على هذا العميل.',
+        'للحصول على رقم حقيقي: نفّذ "node -v" من الطرفية الحية أعلاه.'
+      ].join('\n'),
       timestamp: new Date().toLocaleTimeString(),
       cwd: '/app/applet',
       exitCode: 0,
@@ -61,14 +81,18 @@ export default function DeveloperPage() {
       output: [
         '👑 SOVEREIGN CORE OS v3.8 TELEMETRY STATUS',
         '------------------------------------------------------------',
-        '● Server Core       : ONLINE (Linux Bash Sandbox + Node.js Core)',
-        '● Shell Gateway     : ACTIVE (Real-time Subprocess Execution Enabled)',
-        '● RAM Heap Memory   : 48 MB / 512 MB (Capacity Ceiling)',
-        '● MCP Protocol      : ONLINE (v1.0.0, Model Context Gateway)',
-        '● HITL Guard        : ENFORCED (Security Boundary Intact)',
-        '● Audit Ledger      : INTACT (SHA-256 Merkle Chain)',
-        '● Sentinel SOC      : ACTIVE (Defensive Local Sandbox)',
-        '● Gemini Neural AI  : READY (gemini-3.8-flash)',
+        '(نص تمهيدي مُعلَّم — ليس ناتج تنفيذ حقيقي.)',
+        '● Server Core       : UNVERIFIED (لم يُقَس في هذا السجل)',
+        '● Shell Gateway     : UNVERIFIED (لم يُقَس في هذا السجل)',
+        '● RAM Heap Memory   : UNVERIFIED (لم يُقَس في هذا السجل)',
+        // Honesty fix: this used to assert ONLINE for the MCP protocol. The
+        // registry performs a file-existence probe only and never emits ONLINE,
+        // so the banner must not contradict the panel it links to.
+        '● MCP Protocol      : UNVERIFIABLE (لم تُنفَّذ مصافحة — راجع تبويب مركز الخوادم)',
+        '● HITL Guard        : UNVERIFIED (لم يُقَس في هذا السجل)',
+        '● Audit Ledger      : UNVERIFIED (لم يُقَس في هذا السجل)',
+        '● Sentinel SOC      : UNVERIFIED (لم يُقَس في هذا السجل)',
+        '● Gemini Neural AI  : UNVERIFIED (لم يُقَس في هذا السجل)',
         '------------------------------------------------------------',
         'Hint: You can run ANY real Linux shell command here: ls, pwd, cat, git, npm, ps, or sovereign directives!'
       ].join('\n'),
@@ -275,7 +299,7 @@ export default function DeveloperPage() {
     { url: '/api/mcp/status', method: 'GET', desc: 'Check Model Context Protocol (MCP) server daemon status' },
     { url: '/api/mcp/servers', method: 'GET', desc: 'Inspect full catalog of 6 MCP servers + Sovereign Commander' },
     { url: '/api/lsp/servers', method: 'GET', desc: 'Inspect all 6 Language Server Protocol (LSP) engines' },
-    { url: '/api/servers-center/overview', method: 'GET', desc: 'Query unified E:\\Servers-Center device hub status' },
+    { url: '/api/servers-center/overview', method: 'GET', desc: 'Query unified Servers Center device hub — resolved root + FILE_EXISTENCE_ONLY measurement envelope (not a reachability claim)' },
     { url: '/api/hitl/audit/verify', method: 'GET', desc: 'Cryptographic ledger hash validation probe' },
     { url: '/api/agents/metrics', method: 'GET', desc: 'Real 24h deterministic agent operations telemetry' }
   ];
@@ -853,7 +877,24 @@ export default function DeveloperPage() {
 
         {/* ── TAB 5: SERVERS CENTER (MCP & LSP UNIFIED CONTROL) ── */}
         {activeTab === 'servers-center' && (
-          <ServersCenterPanel />
+          <div className="space-y-3">
+            {/* Honesty banner: what this page will and will not claim about the
+                Servers Center. The panel below prints only measured values; this
+                banner tells the operator that a path check is all there is, so a
+                wall of UNVERIFIABLE badges is read as a missing handshake rather
+                than as a broken fleet. */}
+            <div className="flex items-start gap-2 p-3 rounded-xl border border-amber-700/50 bg-amber-950/20 text-[11px] font-mono">
+              <AlertCircle className="w-4 h-4 mt-px shrink-0 text-amber-400" aria-hidden="true" />
+              <p className="text-slate-300 leading-relaxed">
+                اللوحة أدناه تعرض <span className="text-amber-300">القياس الفعلي فقط</span>:
+                فحص وجود المسارات على القرص عبر{' '}
+                <span dir="ltr">FILESYSTEM_EXISTENCE_PROBE</span>. لا يوجد في هذه الواجهة أي مصافحة
+                <span dir="ltr"> MCP/LSP</span>، لذلك لن يظهر أي مدخل بحالة «متصل» — وهذا نقص قياس
+                صريح وليس عطلاً في الخوادم.
+              </p>
+            </div>
+            <ServersCenterPanel />
+          </div>
         )}
 
       </div>

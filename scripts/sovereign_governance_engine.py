@@ -143,19 +143,30 @@ class SovereignClient:
     async def probe_audit_chain(self) -> SubsystemReport:
         status, data = await self._async_http_call("/api/hitl/audit/verify")
         chain_status = data.get("status")
+        entry_count: int = data.get("entryCount", -1)
+        broken_at = data.get("brokenAt")
         match (status, chain_status):
             case (200, "INTACT"):
+                verified = data.get("verifiedEntries", 0)
                 return SubsystemReport(
                     name="Sovereign Audit Chain",
                     status="VERIFIED_INTACT",
-                    details="Cryptographic SHA-256 ledger tamper-proof and consistent",
+                    details=f"SHA-256 ledger tamper-proof | {verified} entries verified",
+                    healthy=True,
+                )
+            case (200, "UNVERIFIED") if entry_count == 0 and broken_at is None:
+                # Empty ledger = genesis state — no entries, no tampering detected
+                return SubsystemReport(
+                    name="Sovereign Audit Chain",
+                    status="EMPTY_LEDGER_HEALTHY",
+                    details="Ledger in genesis state (0 entries, brokenAt=null) — no tampering detected",
                     healthy=True,
                 )
             case _:
                 return SubsystemReport(
                     name="Sovereign Audit Chain",
                     status="TAMPERED_OR_CORRUPT",
-                    details=f"Chain status: {chain_status}",
+                    details=f"Chain status: {chain_status} | brokenAt: {broken_at} | entries: {entry_count}",
                     healthy=False,
                 )
 
