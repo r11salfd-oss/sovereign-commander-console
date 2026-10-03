@@ -187,14 +187,36 @@ async function startServer() {
   //     are reported as 'TAMPERED'.
   //
   // LIMITATION (reported honestly, never hidden):
-  //   The ledger is a process-local in-memory array with NO externally persisted
-  //   genesis anchor, and entries are lost on restart. An attacker who already has
-  //   code execution inside this process could rewrite payloads AND hashes together.
-  //   A clean recomputation therefore proves only "no detectable in-process
-  //   mutation" - it is NOT proof of tamper-resistance. Because genuine
-  //   cryptographic verification is unachievable with the current storage, this
-  //   function never returns 'INTACT'; it returns 'UNVERIFIED' with an explicit
-  //   reason. An honest "cannot verify" is strictly preferred over a fake "INTACT".
+  //   THIS ledger - the `approvals` array read by /api/hitl/audit/verify - is a
+  //   process-local in-memory array. It is never hydrated from disk and never
+  //   written to disk anywhere in this file (the only fs.* calls here are .env
+  //   loading, shell discovery, the admin-token file read, and cwd validation),
+  //   so entries ARE lost on restart. An attacker who already has code execution
+  //   inside this process could rewrite payloads AND hashes together. A clean
+  //   recomputation therefore proves only "no detectable in-process mutation" - it
+  //   is NOT proof of tamper-resistance.
+  //
+  //   DO NOT CONFLATE THIS LEDGER WITH THE OTHER ONE. A genuinely persisted,
+  //   disk-backed ledger DOES exist and is a different subject: the sovereign-commander
+  //   MCP server appends seq-numbered records to data/audit-ledger.jsonl and
+  //   rehydrates them via loadLedgerFromDisk() (src/services/sovereignMcpServer.ts).
+  //   That ledger has a different schema (seq/recordedAt/event/chainKeyId/prevHash/
+  //   evidenceBearing/hash), not the `ap-<n>` ids used here, and nothing in this
+  //   file reads it. Its persistence does NOT make this endpoint verifiable, and
+  //   its entry counts must never be quoted as this endpoint's entry counts.
+  //
+  //   THE ACTUAL BLOCKER IS THE ABSENCE OF EXTERNAL ATTESTATION - not merely the
+  //   absence of storage. An external anchor design was assessed and deliberately
+  //   WITHDRAWN: a genesis-pinned hash is deterministically derivable from the
+  //   genesis constant alone, so it pins nothing that an attacker with write access
+  //   could not recompute. Per-entry recomputation therefore remains UNANCHORED.
+  //   Writing the ledger to disk would improve durability and forensics, but on its
+  //   own it would still NOT make tamper-evidence cryptographically provable.
+  //
+  //   Because genuine cryptographic verification is unachievable in the current
+  //   design, this function never returns 'INTACT'; it returns 'UNVERIFIED' with an
+  //   explicit reason. An honest "cannot verify" is strictly preferred over a fake
+  //   "INTACT".
   const AUDIT_GENESIS_HASH = nodeCrypto.createHash('sha256').update('SOVEREIGN_AUDIT_GENESIS_V1').digest('hex');
 
   type AuditVerification = {
@@ -301,7 +323,7 @@ async function startServer() {
       reason = `Chain coverage is incomplete: ${unhashedEntries}/${entryCount} entries carry no prevHash/integrityHash (created outside /api/hitl/propose or before chain stamping was enabled).`;
     } else {
       status = 'UNVERIFIED';
-      reason = `Forward-linked SHA-256 recomputation succeeded for ${verifiedEntries}/${entryCount} entries, but no externally persisted genesis anchor exists: the ledger is process-local and in-memory only, so tamper-evidence cannot be cryptographically proven. Reporting UNVERIFIED instead of a fabricated INTACT.`;
+      reason = `Forward-linked SHA-256 recomputation succeeded for ${verifiedEntries}/${entryCount} entries, but there is NO EXTERNAL ATTESTATION. This ledger is process-local and in-memory only (never hydrated from disk, never written to disk, entries lost on restart), and persistence alone would not close the gap: an external anchor design was assessed and WITHDRAWN because a genesis-pinned hash is deterministically derivable and therefore pins nothing, leaving per-entry recomputation unanchored. Tamper-evidence therefore cannot be cryptographically proven. Reporting UNVERIFIED instead of a fabricated INTACT.`;
     }
 
     return {
@@ -316,7 +338,7 @@ async function startServer() {
     };
   }
 
-  // Real Agent Activity Metrics Store (24-Hour Deterministic Timeline from Real System State)
+  // Real Agent Activity Metrics Store (24-Hour Timeline — SEE WARNING BELOW)
   const agentActivityLog: { [agentId: string]: { timestamp: number; type: string }[] } = {
     orchestrator: [],
     architect: [],
@@ -332,7 +354,20 @@ async function startServer() {
     reviewer: []
   };
 
-  // Seed baseline 24-hour historical records based on real system operations
+  // SYNTHETIC baseline, NOT measured history — HONESTY FIX.
+  // This previously read "Seed baseline 24-hour historical records based on real
+  // system operations". That was false and the word "real" was the whole defect.
+  // The arrays below are hand-authored literals in a fixed ramp-and-decay shape.
+  // No operation ever recorded them; they are injected into agentActivityLog at
+  // startup and then charted by /api/agents/metrics as `total24h`.
+  //
+  // CONSEQUENCE: every `total24h`, `peakHourly` and `hourlyData` value served by
+  // that endpoint is therefore dominated by this fiction, and only genuinely
+  // appended entries (via recordAgentAction) are real. The data is retained
+  // because removing it is a logic/policy change outside this pass's scope, but it
+  // must never be presented, charted or cited as observed agent activity. A real
+  // liveness signal does exist and is computed separately from live runtime
+  // handles (see the A8 block below and GET /api/status).
   const initialSeedNow = Date.now();
   const agentBaselines: { [key: string]: number[] } = {
     orchestrator: [3, 4, 2, 1, 2, 3, 5, 8, 14, 20, 26, 30, 35, 31, 28, 26, 30, 32, 24, 20, 18, 22, 28, 30],
@@ -501,7 +536,12 @@ async function startServer() {
       ok: true,
       status: 'online',
       hitl: 'active',
-      node: process.version || 'v20.12.2',
+      // HONESTY FIX: the fallback was the fabricated literal 'v20.12.2'. If this
+      // ever did fire it would report a Node version this process never ran, which
+      // is the worst kind of wrong answer for a topology endpoint. Node always
+      // populates process.version, so this branch is unreachable in practice; it is
+      // corrected to admit ignorance rather than invent a version.
+      node: process.version || 'unavailable',
       platform: wsInfo.platform,
       workspace: wsInfo.displayPath,
       workspaceInfo: wsInfo
@@ -648,7 +688,16 @@ async function startServer() {
     };
   }
 
-  // Comprehensive Real-Time System Telemetry (Absolute Truth Probe)
+  // System Telemetry (scope stated honestly — see HONESTY NOTE below)
+  //
+  // HONESTY NOTE: this endpoint was previously commented "Absolute Truth Probe".
+  // That was itself a false claim. Almost every verdict below is a hardcoded
+  // literal, not a measurement: no MCP handshake is performed, no firewall rule
+  // is enumerated, no provider is contacted, and no HITL enforcement path is
+  // exercised. `status`/`code` keys are preserved so existing consumers keep
+  // working, but their values are corrected to say what was actually observed,
+  // and the fabricated literals are withdrawn. Real measured transport results
+  // live in GET /api/status (host_prober) — do not read them from here.
   app.get('/api/system/telemetry', (req, res) => {
     const memory = getMemoryMetrics();
     const auditVerification = verifyAuditChain();
@@ -662,20 +711,29 @@ async function startServer() {
         coreServer: { 
           status: 'ONLINE', 
           code: 'OK', 
-          message: 'نواة الخادم تعمل باستقرار تام دون اختناق في الذاكرة' 
+          // Previously claimed "works with complete stability without memory
+          // bottleneck". No pressure or stability analysis is performed here.
+          message: 'نواة الخادم تستجيب للطلب (Reachable). لم يُجرَ أي قياس ضغط ذاكرة في هذا المسار — ادعاء "الاتساق التام" كان بلا قياس.'
         },
         mcpProtocol: { 
-          status: mcpServerStatus === 'active' ? 'ONLINE' : 'DEGRADED', 
+          status: mcpServerStatus === 'active' ? 'LOCAL_FLAG_ACTIVE' : 'DEGRADED', 
           code: mcpServerStatus.toUpperCase(), 
-          serversCount: 1, 
-          protocol: 'v1.0.0',
-          message: mcpServerStatus === 'active' ? 'خادم بروتوكول MCP متصل وجاهز للاستدعاء' : 'خادم MCP غير متاح حالياً'
+          // 1 = the single in-process MCP server object, NOT the measured fleet.
+          // The measured count (7 servers / 107 tools) comes from host_prober.
+          serversCount: 1,
+          // Previously the fabricated literal 'v1.0.0'; no protocol version is read.
+          protocol: 'unverified',
+          message: mcpServerStatus === 'active'
+            ? 'خادم MCP داخل العملية مفعّل محلياً — لم تُنفَّذ أي مصافحة initialize/tools/list في هذا المسار'
+            : 'خادم MCP غير متاح حالياً'
         },
         hitlGuard: { 
           status: 'ACTIVE', 
-          code: 'ENFORCED', 
+          // Previously the hardcoded 'ENFORCED'. This endpoint counts pending
+          // approvals; it does not exercise any enforcement path.
+          code: 'UNVERIFIED', 
           pendingCount: approvals.filter(a => a.status === 'pending').length,
-          message: 'حارس HITL يفرض التحقق البشري الصارم على العمليات الحساسة' 
+          message: 'حارس HITL: عدد الطلبات المعلّقة محسوب فعلياً. لم يُختبر مسار الفرض (ENFORCED) في هذا المسار.Ledger السجل داخل الذاكرة ويُلغى عند إعادة التشغيل.'
         },
         auditLedger: { 
           // Honest mapping: only a real detection reports TAMPERED. An unverifiable
@@ -692,16 +750,21 @@ async function startServer() {
             : 'سلسلة التدقيق غير قابلة للتحقق التشفيري حالياً: ' + auditVerification.reason
         },
         sentinelSoc: { 
-          status: 'ONLINE', 
-          code: 'ACTIVE', 
-          firewallRules: 24,
-          message: 'مركز العمليات الأمنية Sentinel يعزل مجلد الخزينة ويصد مسابير الاختراق' 
+          // No SOC probe, no rule enumeration and no isolation test runs here.
+          status: 'UNVERIFIED', 
+          code: 'NOT_PROBED', 
+          // Was the hardcoded literal 24. No rule set is enumerated by this
+          // endpoint, so the true count is unknown and is published as null
+          // rather than as a number this code path never derived.
+          firewallRules: null,
+          message: 'مركز العمليات الأمنية Sentinel: لم يُنفَّذ أي فحص في هذا المسار. العدد "24" كان رقماً حرفياً لم يُحتسب من أي قاعدة قواعد — سُحب وأُعيد نشره كـ null.'
         },
         geminiGateway: { 
+          // The env-var test is real; 'READY' and "ready to process tasks" were not.
           status: process.env.GEMINI_API_KEY ? 'CONFIGURED' : 'OAUTH_READY', 
-          code: 'READY',
+          code: process.env.GEMINI_API_KEY ? 'KEY_PRESENT_NOT_PROBED' : 'OAUTH_READY_NOT_PROBED',
           model: 'gemini-3.8-flash',
-          message: 'بوابة الاستدلال العصبي جاهزة لمعالجة المهام' 
+          message: 'بوابة الاستدلال العصبي: مفتاح API موجود/غير موجود فقط. لا يوجد اتصال بالمزوّد في هذا المسار، فادعاء "جاهزة" غير مُقاس.'
         }
       }
     });
@@ -720,7 +783,14 @@ async function startServer() {
     });
   });
 
-  // Real Agent Activity Metrics Endpoint (Deterministic, Live-Updating 24H Timeline)
+  // Agent Activity Metrics Endpoint (24H Timeline) — PARTIALLY SYNTHETIC, HONESTY FIX:
+  // the word "Real" was removed from this comment because the 24-hour series served
+  // here is seeded at startup from the hand-authored `agentBaselines` literals, not
+  // from recorded operations. `total24h` and `hourlyData` are therefore synthetic for
+  // the seeded window and real only for entries appended after startup. The endpoint
+  // comment claiming a "Deterministic ... from Real System State" timeline overstated
+  // what the numbers are. Consumers needing genuine liveness should use the runtime
+  // handle signal in GET /api/status instead of this chart.
   app.get('/api/agents/metrics', (req, res) => {
     const currentNow = Date.now();
     const result: { [key: string]: any } = {};
@@ -880,7 +950,15 @@ async function startServer() {
           probeMethod: s.probeMethod,
           measured: s.measured,
           durationMs: s.durationMs,
-          lastProbedAt: s.lastProbedAt
+          lastProbedAt: s.lastProbedAt,
+          // Preserved so a consumer — and the telemetry verifier — can confirm the
+          // scoring denominator equals the count of scoreable entries. Without this
+          // the denominator is an assertion; with it, it is checkable.
+          category: s.category,
+          scoreable: s.scoreable,
+          // The readable reason an entry sits outside the denominator. Published so
+          // an exclusion can never be a silent score adjustment.
+          categoryJustification: s.categoryJustification
         }))
       : overview.lspSummary.servers.map(s => ({
           id: s.id,
@@ -967,9 +1045,23 @@ async function startServer() {
     const mcpOffline = mcpMeasured ? mcpProbe.summary.offline : 0;
     const mcpUnverified = mcpMeasured ? mcpProbe.summary.unverifiable : overview.mcpSummary.total;
     const mcpTotal = mcpMeasured ? mcpProbe.summary.total : overview.mcpSummary.total;
-    const lspReady = lspMeasured ? lspProbe.summary.online : overview.lspSummary.readyCount;
+    // Scoring denominator = `measurableTotal` (entries categorised
+    // `language-server`), NOT `declaredTotal`. Three of the six originally
+    // declared entries are the TypeScript COMPILER, the ESLint LINTER and the
+    // .NET SDK: filed under `lsp`, but structurally incapable of answering an
+    // LSP handshake. Counting them deducted points from three servers that
+    // genuinely work, purely because assets that can never respond were sitting
+    // in the denominator. Nothing is hidden — `declaredTotal`,
+    // `nonLanguageServerTotal` and every per-entry `category` are published too.
+    const lspReady = lspMeasured ? lspProbe.summary.measurableOnline : overview.lspSummary.readyCount;
     const lspUnverified = lspMeasured ? lspProbe.summary.unverifiable : overview.lspSummary.total;
-    const lspTotal = lspMeasured ? lspProbe.summary.total : overview.lspSummary.total;
+    const lspTotal = lspMeasured ? lspProbe.summary.measurableTotal : overview.lspSummary.total;
+    const lspDeclaredTotal = lspMeasured
+      ? lspProbe.summary.declaredTotal
+      : overview.lspSummary.total;
+    const lspNonLanguageServer = lspMeasured
+      ? lspProbe.summary.nonLanguageServerTotal
+      : Math.max(0, lspDeclaredTotal - lspTotal);
     // Divide-by-zero guard. Inside the Linux container the servers-center root is not
     // mounted, so a failed discovery legitimately yields total = 0 for both subsystems.
     // The raw expression would then evaluate (0/0) -> NaN and render "NaN/100".
@@ -1076,8 +1168,22 @@ async function startServer() {
         rpcSelfTest: mcpRpcSelfTest
       },
       lsp: {
-        total: lspTotal,
+        // `total` counts the entries in `servers[]` — nothing else. It previously
+        // carried the SCORING denominator (3, the language servers) while the array
+        // held 6, which made one name mean two things and tripped the telemetry
+        // verifier. The scoring denominator is now published under its own name.
+        total: lspDeclaredTotal,
         ready: lspReady,
+        // Scoring denominator: entries categorised `language-server`. The three
+        // excluded entries are the TypeScript COMPILER, the ESLint LINTER and the
+        // .NET SDK — filed under `lsp`, but structurally incapable of answering an
+        // LSP handshake. Counting them deducted points from three servers that
+        // genuinely work. Nothing is hidden: the declared count and the excluded
+        // count travel with this payload.
+        measurableTotal: lspTotal,
+        declaredTotal: lspDeclaredTotal,
+        nonLanguageServerTotal: lspNonLanguageServer,
+        denominatorBasis: `measurableTotal=${lspTotal} (category: language-server only) of declaredTotal=${lspDeclaredTotal}; ${lspNonLanguageServer} declared entries are not language servers and cannot answer a handshake.`,
         expectedCount: overview.lspSummary.expectedCount,
         unverifiedCount: lspUnverified,
         measurementSource: lspMeasured ? 'HOST_PROBER_MEASURED' : 'CONTAINER_FILESYSTEM_PROBE',
@@ -1122,11 +1228,35 @@ async function startServer() {
   const CLI_TOKEN_ENV_VAR = 'SOVEREIGN_CLI_TOKEN';
 
   function readConfiguredCliToken(): string {
+    // Preferred source: a FILE, not an environment variable.
+    //
+    // A token in the environment is readable by `docker inspect`, which prints
+    // Config.Env verbatim, so any operator account on the host can recover the
+    // administrative credential in one command. A file inside a bind-mounted
+    // directory never appears in that output, which removes that disclosure path
+    // entirely. The env var remains supported as a fallback so an existing
+    // deployment is not broken by the change.
+    const filePath = process.env.SOVEREIGN_CLI_TOKEN_FILE;
+    if (typeof filePath === 'string' && filePath.trim()) {
+      try {
+        const fromFile = fs.readFileSync(filePath.trim(), 'utf8').trim();
+        if (fromFile) return fromFile;
+        console.warn(`[SECURITY] ${filePath.trim()} is empty; falling back to ${CLI_TOKEN_ENV_VAR}.`);
+      } catch (err) {
+        console.warn(
+          `[SECURITY] Could not read ${filePath.trim()} (${(err as Error).message}); ` +
+          `falling back to ${CLI_TOKEN_ENV_VAR}.`
+        );
+      }
+    }
     const raw = process.env[CLI_TOKEN_ENV_VAR];
     return typeof raw === 'string' ? raw.trim() : '';
   }
 
   const configuredCliToken = readConfiguredCliToken();
+  const cliTokenSource = (process.env.SOVEREIGN_CLI_TOKEN_FILE && configuredCliToken)
+    ? 'file'
+    : (configuredCliToken ? 'environment' : 'none');
 
   const cliTokens: CliTokenRecord[] = configuredCliToken
     ? [{
@@ -1139,7 +1269,14 @@ async function startServer() {
     : [];
 
   if (cliTokens.length === 0) {
-    console.warn(`[SECURITY] ${CLI_TOKEN_ENV_VAR} is not set. All /api/cli execution endpoints are FAIL-CLOSED (HTTP 401) until an operator provisions a token.`);
+    console.warn(`[SECURITY] Neither SOVEREIGN_CLI_TOKEN_FILE nor ${CLI_TOKEN_ENV_VAR} is set. All /api/cli execution endpoints are FAIL-CLOSED (HTTP 401) until an operator provisions a token.`);
+  } else if (cliTokenSource === 'environment') {
+    // Not fatal, but it is a weaker posture and the operator should know which one
+    // they actually have rather than discovering it during an incident.
+    console.warn(
+      `[SECURITY] CLI token is sourced from the ENVIRONMENT. It is readable via 'docker inspect'. ` +
+      `Set SOVEREIGN_CLI_TOKEN_FILE to a bind-mounted file to remove that disclosure path.`
+    );
   }
 
   // Non-reversible fingerprint for display: first 8 hex chars of SHA-256(token).
@@ -1491,11 +1628,11 @@ async function startServer() {
             `● System Uptime     : ${hrs}h ${mins}m ${secs}s`,
             `● RAM Heap Memory   : ${mem.heapUsedMb} MB / ${mem.heapTotalMb} MB (Capacity Ceiling: ${mem.heapLimitMb} MB)`,
             `● RSS Memory        : ${mem.rssMb} MB`,
-            `● MCP Protocol      : ${mcpServerStatus === 'active' ? 'ONLINE (v1.0.0)' : 'DEGRADED'}`,
-            `● HITL Guard        : ENFORCED (${approvals.filter(a => a.status === 'pending').length} pending approvals)`,
-            `● Audit Ledger      : ${auditVerification.status} (${auditVerification.verifiedEntries}/${auditVerification.entryCount} entries recomputed; no persisted genesis anchor)`,
-            `● Sentinel SOC      : ACTIVE (24 firewall rules enforced)`,
-            `● Gemini Neural AI  : READY (gemini-3.8-flash)`
+            `● MCP Protocol      : ${mcpServerStatus === 'active' ? 'LOCAL FLAG "active" — no handshake performed' : 'DEGRADED (local flag)'}; no initialize/tools/list handshake in this command`,
+            `● HITL Queue        : ${approvals.filter(a => a.status === 'pending').length} pending approvals (count only — "ENFORCED" was an unverified label)`,
+            `● Audit Ledger      : ${auditVerification.status} (${auditVerification.verifiedEntries}/${auditVerification.entryCount} entries recomputed; no external attestation, so the chain is unanchored)`,
+            `● Sentinel SOC      : UNVERIFIED — the "24 firewall rules enforced" count was a hardcoded literal, not an enumeration`,
+            `● Gemini Neural AI  : UNVERIFIED — "READY" was asserted without contacting the provider`
           ].join('\n');
         } else if (mainCmd === 'memory' || mainCmd === 'mem') {
           if (subCmd === 'clean' || subCmd === 'gc') {
@@ -1529,15 +1666,21 @@ async function startServer() {
           output = `🏓 PONG from Sovereign Core Server! Timestamp: ${new Date().toISOString()} | Uptime: ${Math.floor(process.uptime())}s`;
         } else if (mainCmd === 'agents') {
           output = [
-            '🤖 SOVEREIGN AGENT CORPS (24-HOUR ACTIVITY MATRIX)',
+            '🤖 SOVEREIGN AGENT CORPS — UNMEASURED (this command counts no activity)',
             '------------------------------------------------------------',
-            '  [architect]       ACTIVE  - 211 ops (Planning & Path Hygiene)',
-            '  [developer]       ACTIVE  - 703 ops (Code Implementation & Compiler Verification)',
-            '  [sentinel]        ACTIVE  - 581 ops (Defensive Security & Cryptographic Isolation)',
-            '  [forge]           STANDBY - 209 ops (Structural Code Synthesis)',
-            '  [redSimulation]   CONTROL - 212 ops (Local Defensive Sandboxed Simulation)',
-            '  [reviewer]        STANDBY - 225 ops (Architecture Alignment Reviews)',
-            '  [geminiInterface] ACTIVE  - 868 ops (Interface Governance & Command Dispatch)'
+            '  Per-agent state below is UNVERIFIED. This command spawns no agent, reads no',
+            '  runtime handle and counts no operations, so it cannot assert ACTIVE / STANDBY',
+            '  or an "ops" total. The figures it used to print (211 / 703 / 581 / 209 / 212 /',
+            '  225 / 868) were hardcoded string literals, not measurements.',
+            '------------------------------------------------------------',
+            '  Roster (declared, NOT probed):',
+            '  [orchestrator] [architect] [developer] [sentinel] [forge] [researcher]',
+            '  [leadEngineer] [deliveryAgent] [geminiInterface] [truthAuditor]',
+            '  [redSimulation] [reviewer]',
+            '------------------------------------------------------------',
+            '  "STANDBY" was a LEGACY wire value meaning "asset file absent". This release no',
+            '  longer emits it for any agent, so a legacy value is not a current status.',
+            '  For a status that carries its own stated derivation, query GET /api/status.',
           ].join('\n');
         } else if (mainCmd === 'agent') {
           const targetAgent = parts[1] || 'orchestrator';
@@ -1574,7 +1717,7 @@ async function startServer() {
           }
         } else if (mainCmd === 'approvals') {
           if (approvals.length === 0) {
-            output = '📋 No pending approvals in HITL queue. All clear!';
+            output = '📋 No pending approvals in HITL queue. All clear! — UNVERIFIED: this ledger is process-local and in-memory only, so it is empty after every restart. "All clear" here describes an empty array, not a verified absence of approvals.';
           } else {
             output = '📋 HUMAN-IN-THE-LOOP APPROVALS QUEUE:\n' + approvals.map((a, i) => 
               `  #${i + 1} [${a.status.toUpperCase()}] ID: ${a.id} | Action: ${a.action} | Target: ${a.target || 'System'}`
@@ -1595,24 +1738,47 @@ async function startServer() {
           output = [
             '🔌 MODEL CONTEXT PROTOCOL (MCP) STATUS',
             '------------------------------------------------------------',
-            `Daemon State  : ${mcpServerStatus.toUpperCase()}`,
-            `Protocol Ver  : v1.0.0`,
-            `Active Tools  : 3 verified tools (fs_read, fs_write, git_status)`,
-            `Security Mode : Strictly Sandboxed Local Workspace Bounds`
+            `Daemon State  : ${mcpServerStatus.toUpperCase()} (local runtime flag — NOT a transport handshake)`,
+            `Protocol Ver  : UNVERIFIED — this command starts no MCP server and reads no protocol version`,
+            `Active Tools  : UNVERIFIED — this command spawns no MCP server and performs no`,
+            `                initialize/tools/list handshake, so it cannot count tools. This line`,
+            `                used to assert a hardcoded "3 verified tools (fs_read, fs_write,`,
+            `                git_status)" list that no handshake ever returned. The measured`,
+            `                figure comes from scripts/host_prober.ts, which speaks real stdio`,
+            `                JSON-RPC against every declared server.`,
+            `Security Mode : Declared sandbox workspace bounds — NOT verified by this command`
           ].join('\n');
         } else if (mainCmd === 'tests') {
+          // HONESTY FIX: this block used to print a hardcoded
+          // '8/8 Tests Passed (100% Success Rate, 0 Errors)' preceded by eight
+          // fabricated [PASS] lines. NO TEST WAS EVER EXECUTED HERE - not tsc, not
+          // a sandbox probe, not a hash-chain recomputation, not a network
+          // roundtrip. Item 07 even named a "Gemini 3.8 Flash Neural Gateway Probe"
+          // that no code path in this branch performs. The endpoint then returned
+          // exitCode: 0, so a fabricated all-clear was delivered as a success.
+          //
+          // The real, executed verification lives elsewhere and each reports its
+          // own exit code:
+          //   * `npx tsc --noEmit`                       - the real compile gate
+          //   * `python scripts/run_sovereign_tests.py`   - `npm test`
+          //   * `npx tsx scripts/host_prober.ts`         - real MCP/LSP handshakes
+          //
+          // Printing a pass rate for a suite that did not run is precisely the
+          // defect class this console was stripped of. The branch is retained so
+          // the command contract is unchanged, but it now reports what it is.
           output = [
-            '🚀 EXECUTING AUTOMATED QA TEST SUITE...',
-            '  [PASS] 01. TypeScript Compilation Check (tsc --noEmit)',
-            '  [PASS] 02. Sovereign Kernel Resource Allocation Bounds',
-            '  [PASS] 03. Sentinel SOC War Chest Path Isolation',
-            '  [PASS] 04. SHA-256 Ledger Block Consistency Test',
-            '  [PASS] 05. Model Context Protocol (MCP) IPC Roundtrip',
-            '  [PASS] 06. Human-In-The-Loop Approval Enforcement',
-            '  [PASS] 07. Gemini 3.8 Flash Neural Gateway Probe',
-            '  [PASS] 08. Service Worker & PWA Manifest Compliance',
+            '🚀 AUTOMATED QA TEST SUITE — NOT EXECUTED BY THIS COMMAND',
             '------------------------------------------------------------',
-            '✅ RESULT: 8/8 Tests Passed (100% Success Rate, 0 Errors)'
+            '  This command runs NO tests. It performs no compilation, no sandbox',
+            '  probe, no hash-chain recomputation and no network roundtrip, so it',
+            '  has NO pass rate to report and NO [PASS] line can be printed here.',
+            '------------------------------------------------------------',
+            '  Run the real gates instead (each executes and reports its own exit code):',
+            '    npx tsc --noEmit                      - TypeScript compile gate',
+            '    python scripts/run_sovereign_tests.py - Sovereign master suite (npm test)',
+            '    npx tsx scripts/host_prober.ts        - real MCP/LSP transport handshakes',
+            '------------------------------------------------------------',
+            '⚠️ RESULT: UNVERIFIED — 0 tests executed by this command. No pass rate exists.'
           ].join('\n');
           recordAgentAction('developer');
         } else if (mainCmd === 'whoami') {
@@ -1953,13 +2119,25 @@ echo ""
       return;
     }
 
-    const randomMac = 'hmac-sha256-sig-' + Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('');
+    // HONESTY FIX: this was labelled 'hmac-sha256-sig-' and stored into
+    // `approval.signature`. It is NOT an HMAC and NOT a signature: it is 64 hex
+    // characters drawn from Math.random(), which is neither cryptographically secure
+    // nor a function of the approved payload. The prefix asserted an algorithm that
+    // was never run, and the field name asserted a signature that NOTHING in this
+    // codebase verifies — no code path recomputes or checks it; it is only displayed.
+    // The prefix now states what the value is. The field KEY is deliberately
+    // unchanged so existing consumers keep working, and the value is still a 64-char
+    // hex token, but it must never be cited as proof of authenticity, as an HMAC, or
+    // as non-repudiation. Genuine detached-signature verification does not exist here.
+    const randomToken = 'unverified-noncrypto-token-' + Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('');
     approval.status = 'approved';
-    approval.signature = randomMac;
+    approval.signature = randomToken;
 
     res.json({
       success: true,
-      message: `Action approval registered with cryptographic verification signature. Ready for execution.`,
+      // Previously "registered with cryptographic verification signature" — there is
+      // no cryptographic verification and no signature. Stated plainly instead.
+      message: `Action ${id} marked approved. NOTE: approval.signature is a non-cryptographic Math.random() token — no HMAC, Ed25519 or other signature is computed or verified by this endpoint. Approval is recorded in an in-memory ledger that is lost on restart. Ready for the (stubbed) execution step.`,
       approval
     });
   });
@@ -2005,58 +2183,81 @@ echo ""
     if (approval.status !== 'approved') {
       res.status(400).json({
         error: 'EXECUTION_DENIED',
-        message: `Action execution denied. Approval state is currently: "${approval.status}". Cryptographic proof of signature required.`
+        // Previously "Cryptographic proof of signature required." No cryptographic
+        // proof of any signature is required or checked on this path — the only gate
+        // is the `status === 'approved'` string test above. The message now names the
+        // gate that actually exists rather than one that does not.
+        message: `Action execution denied. Approval state is currently: "${approval.status}". Gate actually enforced here: the stored status string must read 'approved'. No signature, HMAC or cryptographic proof is verified on this path.`
       });
       return;
     }
 
-    // Simulate exact execution outputs
+    // ── HONESTY FIX: THIS BRANCH EXECUTES NOTHING ─────────────────────────────
+    // Every line below used to assert work that never happened:
+    //   "Verifying HMAC bindings... verified."
+    //   "[OK] 0 errors found. TypeScript compilation successful."
+    //   "Execution audit verified in blockchain ledger. Integrity holds."
+    //   "Verification hook: Directory exists."
+    //   "Sentinel audit checksum: hmac-sha256-file-ef89a2bc"
+    //   "Signed by Commander via HITL Key."
+    // None of it was true. No subprocess is spawned, no file is written, no
+    // directory is created, no compiler runs, no HMAC is computed, no signature is
+    // checked, and the audit ledger's own verdict is UNVERIFIED — so "Integrity
+    // holds" asserted the exact opposite of what /api/hitl/audit/verify reports.
+    // The "audit checksum" was a hardcoded literal printed as if it were a digest of
+    // something real, and "Directory exists" was directory existence dressed up as
+    // verification.
+    //
+    // The branch structure and `exitCode = 0` are preserved deliberately: making
+    // this a real executor, or refusing the approval, is a control-flow change and
+    // out of scope for a prose-truth pass. REPORTED, NOT FIXED. What is corrected
+    // here is only the honesty of the text, so no operator can read "TypeScript
+    // compilation successful" and believe a build ran.
     let stdout = '';
     let stderr = '';
     let exitCode = 0;
 
+    const NOT_EXECUTED = '[NOT EXECUTED — this endpoint is a stub] No subprocess spawned, no file written, no directory created, no compiler run, no HMAC computed, no signature checked. The lines below are labelled INTENT, not results.';
+
     if (approval.type === 'command') {
       const dynamicCwd = approval.payload.cwd || getDynamicWorkspaceRoot();
       const dynamicTsPath = resolveDynamicPath('apps/forge-backend/src/**/*.ts');
-      stdout = `[SOVEREIGN EXECUTE - Dynamic Host Subsystem]\n` +
-               `CWD: ${dynamicCwd}\n` +
-               `Executing payload command: ${approval.payload.binary} ${approval.payload.args?.join(' ')}\n` +
+      stdout = `[SOVEREIGN EXECUTE — STUB, NOTHING WAS EXECUTED\n` +
+               `Requested CWD: ${dynamicCwd}\n` +
+               `Requested payload: ${approval.payload.binary} ${approval.payload.args?.join(' ')}\n` +
                `----------------------------------------------------------------------\n` +
-               `> node -v\n` +
-               `${process.version || 'v20.12.2'}\n` +
-               `> npm run check --workspace apps/forge-backend\n` +
-               `Analyzing TS paths: ${dynamicTsPath}...\n` +
-               `Verifying HMAC bindings... verified.\n` +
-               `Checking schema constraints...\n` +
+               `${NOT_EXECUTED}\n` +
                `\n` +
-               `[OK] 0 errors found. TypeScript compilation successful.\n` +
-               `Execution audit verified in blockchain ledger. Integrity holds.`;
+               `INTENDED (not performed): run the payload command; analyze ${dynamicTsPath}; verify HMAC bindings.\n` +
+               `NOT CLAIMED: compilation was NOT run, "0 errors" was NOT measured, HMAC was NOT\n` +
+               `verified, and the audit ledger is NOT verified — /api/hitl/audit/verify reports UNVERIFIED.`;
     } else if (approval.type === 'mkdir') {
       const dynamicResolved = path.resolve(getDynamicWorkspaceRoot(), approval.payload.targetPath || 'apps/forge-backend/public/commander');
-      stdout = `[SOVEREIGN EXECUTE - Kernel Subsystem]\n` +
-               `Creating target directory block: ${approval.payload.targetPath}\n` +
-               `Applying path hygiene constraints... Passed.\n` +
-               `Dynamic path normalization: resolved ${dynamicResolved}\n` +
+      stdout = `[SOVEREIGN EXECUTE — STUB, NOTHING WAS EXECUTED\n` +
+               `Requested target: ${approval.payload.targetPath}\n` +
+               `Resolved path (string computation only — no filesystem change): ${dynamicResolved}\n` +
+               `${NOT_EXECUTED}\n` +
                `\n` +
-               `[SUCCESS] Directory path created with chmod 0750 local context.\n` +
-               `Verification hook: Directory exists.`;
+               `NOT CLAIMED: no directory was created and no chmod was applied. The former line\n` +
+               `"Verification hook: Directory exists." presented directory existence as\n` +
+               `verification; existence is not evidence that a requested action took effect.`;
     } else if (approval.type === 'write' && approval.id === 'ap-804') {
-      stdout = `[SOVEREIGN EXECUTE - Sentinel Defensive Subsystem]\n` +
-               `Editing sensitive file pathway: ${approval.payload.targetFile}\n` +
-               `Checking signature clearance... Signed by Commander via HITL Key.\n` +
-               `Backing up target destination to firewall.json.bak...\n` +
-               `Writing 114 bytes block data...\n` +
-               `Applying safe reload command...\n` +
+      stdout = `[SOVEREIGN EXECUTE — STUB, NOTHING WAS EXECUTED\n` +
+               `Requested file: ${approval.payload.targetFile}\n` +
+               `${NOT_EXECUTED}\n` +
                `\n` +
-               `[SUCCESS] local loopback firewall policy re-pushed. Rules reloaded.\n` +
-               `Sentinel audit checksum: hmac-sha256-file-ef89a2bc`;
+               `NOT CLAIMED: no backup was taken, no bytes were written, no reload was issued.\n` +
+               `The former "Signed by Commander via HITL Key" asserted a signature check that\n` +
+               `does not exist in this code path, and "Sentinel audit checksum:\n` +
+               `hmac-sha256-file-ef89a2bc" was a hardcoded literal, not a digest of any file.`;
     } else {
-      stdout = `[SOVEREIGN EXECUTE - Simulator]\n` +
+      stdout = `[SOVEREIGN EXECUTE — STUB, NOTHING WAS EXECUTED\n` +
                `Action Type: ${approval.type}\n` +
-               `Command Hash: ${approval.signature || 'unsigned'}\n` +
-               `Executing local routine...\n` +
+               `Signature field (non-cryptographic, UNVERIFIED): ${approval.signature || 'unsigned'}\n` +
+               `${NOT_EXECUTED}\n` +
                `\n` +
-               `[OK] Executed successfully. Local node returned code 0.`;
+               `NOT CLAIMED: no local routine ran and no node returned any code. The former\n` +
+               `"Command Hash:" line mislabelled a Math.random() token as a hash of the command.`;
     }
 
     approval.status = 'executed';
@@ -2066,9 +2267,21 @@ echo ""
       exitCode
     };
 
+    // HONESTY FIX: this read "Action executed successfully on target host. Outputs
+    // collected and signed." All three claims were false. No target host was
+    // contacted — this process performed no I/O beyond string building; the
+    // "outputs" are the labelled placeholders constructed above; and nothing is
+    // signed anywhere in this path.
+    //
+    // REPORTED, NOT FIXED: the line below still sets `status = 'executed'` and
+    // `exitCode` is still 0, so the approval is recorded as executed and reported
+    // as a success even though nothing ran. Correcting that requires a
+    // control-flow change, which is out of scope for this pass. Until it is fixed,
+    // treat a `status: 'executed'` HITL entry as evidence of an approval decision
+    // only — never as evidence that the approved action took effect.
     res.json({
       success: true,
-      message: `Action executed successfully on target host. Outputs collected and signed.`,
+      message: `Action ${id} marked 'executed' in the in-memory ledger. NOTHING WAS ACTUALLY EXECUTED: no target host was contacted, no process was spawned, and the returned stdout is a labelled placeholder rather than real output. Nothing was signed or verified. Do not treat status='executed' as evidence the action took effect.`,
       approval
     });
   });
@@ -2589,7 +2802,7 @@ echo ""
 
       return {
         passed: diagnostics.length === 0,
-        lspServer: 'TypeScript / JavaScript Language Server (tsserver)',
+        lspServer: 'NONE — in-process ts.transpileModule() diagnostics; no tsserver process spawned, no LSP handshake',
         diagnostics,
         errorsCount: diagnostics.length
       };
@@ -2603,7 +2816,7 @@ echo ""
       }
       return {
         passed: diagnostics.length === 0,
-        lspServer: 'JSON / Schema Language Server',
+        lspServer: 'NONE — in-process JSON.parse() only; no schema or language server spawned, no LSP handshake',
         diagnostics,
         errorsCount: diagnostics.length
       };
@@ -2621,7 +2834,7 @@ echo ""
       }
       return {
         passed: diagnostics.length === 0,
-        lspServer: 'Pyright Python Language Server',
+        lspServer: 'NONE — in-process string heuristic (block-statement colon check); Pyright was NOT invoked, no LSP handshake',
         diagnostics,
         errorsCount: diagnostics.length
       };
@@ -2634,15 +2847,31 @@ echo ""
       if (openDouble) diagnostics.push('Unbalanced double quote in shell script');
       return {
         passed: diagnostics.length === 0,
-        lspServer: 'Bash Language Server (ShellCheck Bridge)',
+        lspServer: 'NONE — in-process quote-balance heuristic; ShellCheck was NOT invoked, no LSP handshake',
         diagnostics,
         errorsCount: diagnostics.length
       };
     }
 
+    // HONESTY FIX (all `lspServer` values above/below): each of these fields used
+    // to name a specific language server — 'TypeScript / JavaScript Language
+    // Server (tsserver)', 'JSON / Schema Language Server', 'Pyright Python
+    // Language Server', 'Bash Language Server (ShellCheck Bridge)', 'Generic
+    // Syntax Validator'. NOTHING in this function spawns a language server or
+    // performs a Content-Length framed LSP handshake; it is in-process string and
+    // AST analysis. Naming pyright while only testing whether a line ends in ':'
+    // attributed a real server's authority to a heuristic.
+    //
+    // DO NOT READ THESE AS PROOF OF LSP REACHABILITY. The genuine measured LSP
+    // results (real handshakes, Content-Length framing, currently ONLINE for
+    // bash / yaml / pyright) are produced by scripts/lsp_prober.ts and surfaced
+    // through scripts/host_prober.ts. They are a different subject from this
+    // validator, and this validator's results must never be quoted as LSP status.
     return {
       passed: true,
-      lspServer: 'Generic Syntax Validator',
+      // Nothing at all was executed for this language, so `passed: true` is a
+      // VACUOUS pass, not a clean bill of health.
+      lspServer: 'NONE — no validator executed for this language; the pass is vacuous',
       diagnostics: [],
       errorsCount: 0
     };
@@ -3197,7 +3426,13 @@ ${context}
       ok: true,
       reference: 'ENG-AUDIT-DEEP-091',
       totalGaps: sovereignKernelInstance.gapAuditItems.length,
-      completionRate: '100%',
+      // HONESTY FIX: this was the hardcoded literal '100%' sitting directly beside a
+      // REAL count (`totalGaps`), which made an unmeasured string look like a
+      // computed ratio. This endpoint performs no resolved-vs-open comparison, so no
+      // completion rate can honestly be derived here; per-item state must be read
+      // from `items[]`. Computing it would require a change to scoring logic, which
+      // is deliberately out of scope for a prose-truth pass.
+      completionRate: 'UNVERIFIED (no resolved-vs-open comparison is performed by this endpoint; per-item state is in items[])',
       items: sovereignKernelInstance.gapAuditItems
     });
   });
@@ -3206,8 +3441,14 @@ ${context}
   app.get('/api/tests/status', (req, res) => {
     res.json({
       ok: true,
+      // HONESTY FIX (comment only — response keys deliberately unchanged to avoid
+      // breaking consumers): `status: 'operational'` describes THIS ROUTE answering,
+      // not a QA run. This endpoint starts no suite and inspects no test result, so
+      // it cannot assert the engine is operational in any QA sense. The 'v4.0' in the
+      // engine label was an unverifiable version string and has been withdrawn rather
+      // than restated. The response key set is preserved on purpose.
       status: 'operational',
-      engine: 'Sovereign Industrial Automated QA Engine v4.0',
+      engine: 'Sovereign Industrial Automated QA Engine (unversioned — previous "v4.0" label was unverifiable)',
       departments: [
         'console', 'chat', 'approvals', 'audit', 'agents', 
         'forge', 'developer', 'sentinel', 'kernel', 'input', 'database'
@@ -3322,6 +3563,14 @@ ${context}
     // A11: reflect the real recomputation. 'UNVERIFIED' must not be reported as a
     // passing check - an honest unverified chain is not a verified chain.
     const auditVerification = verifyAuditChain();
+    // REPORTED, NOT FIXED (logic change is out of scope for a prose-truth pass).
+    // `verifyAuditChain()` only ever returns 'TAMPERED' or 'UNVERIFIED' — it is
+    // written never to return 'INTACT'. Therefore `auditOk` is CONSTANTLY FALSE and
+    // this check can never report 'passed'; it always lands on 'failed' (tampered)
+    // or 'unverified'. That is honest rather than flattering, so the outcome is
+    // left alone, but a reader must not assume this branch is reachable or that it
+    // once passed. The same dead 'INTACT' comparison appears in the /api/status
+    // aggregation, where it maps an unreachable 'ONLINE' verdict.
     const auditOk = auditVerification.status === 'INTACT';
     checks.push({
       dept: 'audit',
@@ -3337,10 +3586,16 @@ ${context}
 
     // 5. Agent Corps Registry
     const t4 = performance.now();
+    // REPORTED, NOT FIXED (logic change is out of scope for a prose-truth pass).
+    // `activeAgentsCount` is Object.keys() of a STATIC literal map of 12 buckets, so
+    // it is always 12 and `>= 6` is always true: this check cannot fail. It counts
+    // declared buckets, not observed agent activity, and it contributes a permanent
+    // unearned 'passed' to the aggregate passRate. The check name has been corrected
+    // to describe what is actually counted; the verdict expression is untouched.
     const activeAgentsCount = Object.keys(agentActivityLog).length;
     checks.push({
       dept: 'agents',
-      name: 'Agent Corps Activity Matrix',
+      name: 'Agent Activity Buckets Declared (static count — always passes, not observed activity)',
       status: activeAgentsCount >= 6 ? 'passed' : 'failed',
       latencyMs: Math.max(1, Math.round(performance.now() - t4)),
       details: { activeAgentBuckets: activeAgentsCount }
@@ -3404,12 +3659,22 @@ ${context}
 
     // 9. Input Dock & Workspace Filesystem
     const t8 = performance.now();
+    // HONESTY FIX (naming only — the verdict expression below is untouched): this
+    // check called fs.existsSync(process.cwd()). `process.cwd()` is the running
+    // process's own working directory, so it exists BY CONSTRUCTION — this check
+    // can never fail and therefore contributes a permanent, unearned 'passed' to
+    // the aggregate passRate below. It measures directory existence, not workspace
+    // filesystem health, and directory existence is not a service claim. The name
+    // and the detail key are corrected to say what is actually inspected; the
+    // logic is intentionally left as-is and is reported, not fixed.
     const wsExists = fs.existsSync(process.cwd());
     checks.push({
       dept: 'input',
-      name: 'Multi-Modal Workspace Filesystem',
+      name: 'Process Working Directory Exists (weak check — cannot fail by construction)',
       status: wsExists ? 'passed' : 'failed',
       latencyMs: Math.max(1, Math.round(performance.now() - t8)),
+      // Response keys deliberately unchanged (details.rootExists keeps its original
+      // shape) so no consumer breaks; the naming and the comment above carry the truth.
       details: { rootExists: wsExists }
     });
 

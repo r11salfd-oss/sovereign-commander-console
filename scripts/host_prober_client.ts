@@ -258,6 +258,21 @@ export interface McpProbeReport {
 }
 
 /** One LSP entry. Always UNVERIFIABLE until a real LSP transport is dropped in. */
+/**
+ * What an LSP inventory entry actually IS.
+ *
+ * `unclassified` is deliberately the conservative default: an entry nobody
+ * classified cannot earn a point. It is impossible for an unrecognised value to
+ * be read as `language-server`, so a malformed payload lowers the score rather
+ * than raising it.
+ */
+export type LspEntryCategory =
+  | 'language-server'
+  | 'compiler-cli'
+  | 'linter-cli'
+  | 'sdk-no-lsp-server'
+  | 'unclassified';
+
 export interface LspProbeResult {
   readonly id: string;
   readonly state: ProbeState;
@@ -266,11 +281,37 @@ export interface LspProbeResult {
   readonly durationMs: number;
   readonly reason: ProbeReasonCode;
   readonly reasonText: string;
-  /** Always false: no LSP handshake is implemented. Never infer from a file. */
   readonly measured: boolean;
-  /** FALSE until a Content-Length-framed JSON-RPC LSP client exists. */
   readonly transportImplemented: boolean;
   readonly framing: 'CONTENT_LENGTH_HEADERS';
+  /**
+   * What this entry is. Three of the six originally declared entries were the
+   * TypeScript COMPILER, the ESLint LINTER and the .NET SDK — filed under `lsp`
+   * but incapable of answering an LSP handshake. Scoring them as language
+   * servers deducted points from three real servers for assets that could never
+   * respond.
+   */
+  readonly category: LspEntryCategory;
+  /** TRUE only for `language-server`. Gates the score denominator. */
+  readonly scoreable: boolean;
+  /**
+   * Operator-readable reason this entry is excluded from the denominator. An
+   * exclusion nobody can read is indistinguishable from a quiet score adjustment,
+   * so it travels with the measured row rather than living only in the manifest.
+   */
+  readonly categoryJustification?: string;
+}
+
+/** LSP summary with the two denominators published side by side. */
+export interface LspProbeSummary extends ProbeStateCounts {
+  /** Every declared entry, including ones that are not language servers. */
+  readonly declaredTotal: number;
+  /** Entries categorised `language-server` — the honest scoring denominator. */
+  readonly measurableTotal: number;
+  /** Of those, how many measured ONLINE. */
+  readonly measurableOnline: number;
+  /** declaredTotal - measurableTotal: entries that can never answer a handshake. */
+  readonly nonLanguageServerTotal: number;
 }
 
 /** Payload of `GET /probe/lsp/status`. */
@@ -280,9 +321,9 @@ export interface LspProbeReport {
   readonly proberVersion: string;
   readonly generatedAt: string;
   readonly provenance: ReportProvenance;
-  /** FALSE today. A real LSP client flips this and the states with it. */
+  /** Transport status for the whole sweep. */
   readonly transportImplemented: boolean;
-  readonly summary: ProbeStateCounts;
+  readonly summary: LspProbeSummary;
   readonly servers: readonly LspProbeResult[];
 }
 
@@ -357,6 +398,26 @@ function asStringArray(value: unknown): readonly string[] {
 /** Runtime guard for `ProbeState`. Used by every consumer of the wire. */
 export function isProbeState(value: unknown): value is ProbeState {
   return value === 'ONLINE' || value === 'OFFLINE' || value === 'UNVERIFIABLE';
+}
+
+const LSP_ENTRY_CATEGORIES: ReadonlySet<string> = new Set<LspEntryCategory>([
+  'language-server',
+  'compiler-cli',
+  'linter-cli',
+  'sdk-no-lsp-server',
+]);
+
+/**
+ * Narrow an unknown value to an LSP entry category.
+ *
+ * Anything unrecognised — including `undefined` — becomes `'unclassified'`, which
+ * is NOT scoreable. This is the fail-safe direction: a prober that emits garbage
+ * lowers the reported score rather than inflating it.
+ */
+export function asLspCategory(value: unknown): LspEntryCategory {
+  return typeof value === 'string' && LSP_ENTRY_CATEGORIES.has(value)
+    ? (value as LspEntryCategory)
+    : 'unclassified';
 }
 
 const REASON_CODES: ReadonlySet<string> = new Set<ProbeReasonCode>([
@@ -602,10 +663,21 @@ export function sanitizeLspProbeReport(raw: unknown): LspProbeReport | null {
         : 'LSP_TRANSPORT_NOT_IMPLEMENTED',
       reasonText:
         asString(r?.['reasonText']) ??
-        'No LSP transport is implemented. Readiness is NOT inferred from file existence.',
+        (transportImplemented
+          ? 'The prober reported no reason. Readiness was decided by a Content-Length LSP handshake, but the outcome is unexplained here.'
+          : 'No LSP transport is implemented. Readiness is NOT inferred from file existence.'),
       measured: transportImplemented && r?.['measured'] === true,
       transportImplemented,
       framing: 'CONTENT_LENGTH_HEADERS',
+      // Conservative defaults. A missing or unrecognised category becomes
+      // 'unclassified' with scoreable=false, so a malformed payload can only ever
+      // REMOVE a server from the denominator — never silently add one.
+      category: asLspCategory(r?.['category']),
+      scoreable: asLspCategory(r?.['category']) === 'language-server' && r?.['scoreable'] === true,
+      // Carried verbatim from the manifest. An absent justification is left absent
+      // rather than invented here — inventing one would be the same defect as the
+      // padded denominator it is meant to make visible.
+      categoryJustification: asString(r?.['categoryJustification']),
     };
   });
 
@@ -622,6 +694,17 @@ export function sanitizeLspProbeReport(raw: unknown): LspProbeReport | null {
       online: servers.filter((s) => s.state === 'ONLINE').length,
       offline: servers.filter((s) => s.state === 'OFFLINE').length,
       unverifiable: servers.filter((s) => s.state === 'UNVERIFIABLE').length,
+      // Prefer the prober's own figures; recompute only if absent. Falling back
+      // to `servers.length` would INFLATE measurableTotal and dilute the ratio.
+      declaredTotal: asFiniteNumber(record['declaredTotal']) ?? servers.length,
+      measurableTotal:
+        asFiniteNumber(record['measurableTotal']) ?? servers.filter((s) => s.scoreable).length,
+      measurableOnline:
+        asFiniteNumber(record['measurableOnline']) ??
+        servers.filter((s) => s.state === 'ONLINE' && s.scoreable).length,
+      nonLanguageServerTotal:
+        asFiniteNumber(record['nonLanguageServerTotal']) ??
+        servers.filter((s) => !s.scoreable).length,
     },
     servers,
   };
@@ -718,6 +801,11 @@ export function buildUnverifiableLspReport(
     measured: false,
     transportImplemented: false,
     framing: 'CONTENT_LENGTH_HEADERS' as const,
+    // A degraded report knows nothing about the servers, so nothing can be
+    // classified. 'unclassified' is NOT scoreable, which is the fail-safe
+    // direction: an unmeasured subsystem never contributes to the score.
+    category: 'unclassified' as const,
+    scoreable: false,
   }));
 
   return {
@@ -732,6 +820,13 @@ export function buildUnverifiableLspReport(
       online: 0,
       offline: 0,
       unverifiable: servers.length,
+      // Nothing was measured, so nothing is scoreable. Both denominators are 0
+      // rather than servers.length: reporting a measurable count here would let an
+      // unreachable prober look like a healthy one once divided.
+      declaredTotal: servers.length,
+      measurableTotal: 0,
+      measurableOnline: 0,
+      nonLanguageServerTotal: 0,
     },
     servers,
   };

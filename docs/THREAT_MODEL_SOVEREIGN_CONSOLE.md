@@ -50,7 +50,7 @@ graph TD
 | Asset ID | Asset Name | Description & Value | Criticality |
 | :--- | :--- | :--- | :--- |
 | **AST-01** | `Sovereign War Chest & Approvals Ledger` | Cryptographic approvals for sensitive system mutations | **CRITICAL** |
-| **AST-02** | `Commander Security Profile & Keys` | Ed25519 signing keys and Level-5 clearance credentials | **CRITICAL** |
+| **AST-02** | `Commander Security Profile & Keys` | Ed25519 signing keys and Level-5 clearance credentials — **UNVERIFIED: no Ed25519 signing key material is used for verification anywhere in the codebase (see §6.1)** | **CRITICAL** |
 | **AST-03** | `Agent Working & Semantic Memory` | Active session tokens, system invariants, zero-trust policies | **HIGH** |
 | **AST-04** | `PostgreSQL Database Tables` | Cloud SQL relational records, audit trails, telemetry logs | **HIGH** |
 | **AST-05** | `Microkernel Ring-0 Memory Queues` | Real-time process tables, page tables, ring buffer queues | **HIGH** |
@@ -68,12 +68,30 @@ graph TD
 
 | Threat ID | STRIDE Category | Component Affected | Threat Scenario & Vector | DREAD Score | Mitigation & Security Control | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **THR-01** | **Spoofing** | API Gateway & WebSocket | Impersonating the Supreme Commander via forged JWT/session header | **8.4 (HIGH)** | Cryptographic Ed25519 signature checks, mandatory `request.auth.uid` validation, and ephemeral session token binding. | **MITIGATED** |
+| **THR-01** | **Spoofing** | API Gateway & WebSocket | Impersonating the Supreme Commander via forged JWT/session header | **8.4 (HIGH)** | **NO Ed25519 verification exists.** `request.auth.uid` validation applies on the Firebase/Data Connect path only. | **UNVERIFIED** |
 | **THR-02** | **Tampering** | PostgreSQL / Data Connect | Injecting arbitrary SQL or mutating unauthorized records via GraphQL | **9.0 (CRITICAL)**| Parameterized GraphQL operations, `@auth(expr: "auth.token.role == 'commander'")` row-level security, AST schema validation. | **MITIGATED** |
-| **THR-03** | **Repudiation** | Approvals Page & Ledger | Agent or operator denies executing a destructive operation | **7.2 (MEDIUM)**| Immutable audit ledger, cryptographic hash linking in `auditLog`, non-repudiation signature in `Approval.signature`. | **MITIGATED** |
-| **THR-04** | **Information Disclosure**| Agent Memory Engine | Leaking sensitive API keys or system invariants through chat or memory dump | **8.6 (HIGH)**| Sanitization pipeline in `prepareUnifiedContext`, redaction of restricted paths (`/etc/shadow`, `vault.key`), memory isolation. | **MITIGATED** |
-| **THR-05** | **Denial of Service** | Agent Runtime Loops | Malicious prompt forcing infinite ReAct loops, exhausting tokens and API credits | **8.8 (HIGH)**| Hard cap on loop iterations (`maxIterations: 5`), per-turn token budgets (8192 tokens), circuit breakers with 60s cooldown. | **MITIGATED** |
-| **THR-06** | **Elevation of Privilege**| Microkernel Syscall Engine | User-mode task (Ring 3) attempting to execute Ring-0 kernel memory commands | **9.2 (CRITICAL)**| Descriptor Privilege Level (`dpl: 0`) enforcement, hardware ring check in `kernelEngine.ts`, zero-copy buffer bounds checking. | **MITIGATED** |
+| **THR-03** | **Repudiation** | Approvals Page & Ledger | Agent or operator denies executing a destructive operation | **7.2 (MEDIUM)**| **The ledger is NOT immutable and `Approval.signature` is NOT a signature.** See §6.1 for the verified detail. | **NOT MITIGATED** |
+| **THR-04** | **Information Disclosure**| Agent Memory Engine | Leaking sensitive API keys or system invariants through chat or memory dump | **8.6 (HIGH)**| Sanitization pipeline in `prepareUnifiedContext`, redaction of restricted paths (`/etc/shadow`, `vault.key`), memory isolation. | **UNVERIFIED** |
+| **THR-05** | **Denial of Service** | Agent Runtime Loops | Malicious prompt forcing infinite ReAct loops, exhausting tokens and API credits | **8.8 (HIGH)**| Hard cap on loop iterations (`maxIterations: 5`), per-turn token budgets (8192 tokens), circuit breakers with 60s cooldown. | **UNVERIFIED** |
+| **THR-06** | **Elevation of Privilege**| Microkernel Syscall Engine | User-mode task (Ring 3) attempting to execute Ring-0 kernel memory commands | **9.2 (CRITICAL)**| Descriptor Privilege Level (`dpl: 0`) enforcement, ring check in `kernelEngine.ts`, zero-copy buffer bounds checking. | **UNVERIFIED** |
+
+> **TRUTH NOTICE — status column corrected 2026-10-02.**
+> Every row above previously read `MITIGATED`. That verdict was asserted, never
+> demonstrated. Statuses were downgraded to `UNVERIFIED` where no executed evidence
+> was produced. Rows carrying real, implemented controls (THR-02) keep `MITIGATED`.
+>
+> **THR-01 is the most serious correction.** The original mitigation read
+> "Cryptographic Ed25519 signature checks". A repo-wide search for Ed25519 signature
+> *verification* returns **no implementation**. What exists is:
+> - `src/os/kernelEngine.ts` — emits string literals of the form
+>   `` `ed25519:${hash.slice(0,16)}...${hash.slice(-8)}` ``. That is a truncated
+>   SHA-256 with an `ed25519:` label prefixed; no Ed25519 key is involved and nothing
+>   verifies it. Three further `signatureEd25519` values are hardcoded literals.
+> - `src/services/auditChainAnchor.ts` — a detached-signature verifier exists here,
+>   but the anchor design it serves was **assessed and deliberately WITHDRAWN**
+>   (a genesis-pinned hash is deterministically derivable, so it pins nothing).
+>
+> Therefore no control in this codebase currently performs Ed25519 verification.
 
 ---
 
@@ -84,9 +102,9 @@ graph TD
 [Goal: Execute Unapproved DROP TABLE on Sovereign Database]
 └── 1. Bypass HITL Safety Gate
     ├── 1.1 Direct API call without approval ID
-    │   └── Mitigation: Backend checks Approval record status == 'approved' with cryptographic signature
+    │   └── Mitigation: Backend checks Approval record status == 'approved' — this string-state gate is REAL. No cryptographic proof is checked.
     ├── 1.2 Spoof Commander Approval Signature
-    │   └── Mitigation: Signature verified with Commander's public key (Ed25519)
+    │   └── Mitigation: NONE EXISTS — see §6.1. This previously read "Signature verified with Commander's public key (Ed25519)". No signature is verified anywhere on this path; approval.signature is never read back. Branch 1.2 is OPEN.
     └── 1.3 Poison Agent Goal via Prompt Injection
         └── Mitigation: Agent Tool Registry enforces isDestructive=true interceptor before invoking tool
 ```
@@ -120,10 +138,52 @@ $$\text{DREAD Risk Rating} = \frac{\text{Damage} + \text{Reproducibility} + \tex
 
 1. **Third-Party LLM Provider Latency & Availability**:
    * *Residual Risk*: Intermittent API outages from external AI providers.
-   * *Mitigation*: Fallback model routing configured in `BrainMap` and offline local mock fallback.
+   * *Mitigation*: **UNVERIFIED.** A `BrainMap` fallback route and an "offline local
+     mock fallback" were asserted here. Note that a *mock* fallback is not a
+     mitigation under the anti-fabrication mandate: it silently substitutes fabricated
+     output for a real model response. Either verify the routing or remove the claim.
 2. **Client-Side Memory Inspection**:
    * *Residual Risk*: User inspecting client-side React devtools memory.
-   * *Mitigation*: No secret keys stored in client state; ephemeral tokens only.
+   * *Mitigation*: **UNVERIFIED.** "No secret keys stored in client state" was asserted
+     without an audit of the client bundle; no such audit is recorded in this repo.
 3. **Audit Cadence**:
-   * Automated verification runs on every commit via `scripts/test_threat_modeling.py`.
+   * *CORRECTION — this claim was FALSE.* It stated that automated verification "runs
+     on every commit via `scripts/test_threat_modeling.py`". The script **does exist**
+     (`Test-Path scripts/test_threat_modeling.py` → `True`), but it is **not wired to
+     any workflow**: neither `.github/workflows/ci.yml` nor `deploy.yml` references
+     `test_threat_modeling`. A script that nothing invokes does not run on any commit.
+     Until it is added to CI, this document is **not** automatically enforced.
    * Re-certification required upon architectural changes to `src/os/` or `dataconnect/`.
+
+### 6.1 Verified Detail — Why THR-03 Is NOT Mitigated
+
+Recorded 2026-10-02 from direct source inspection, so the correction above is
+auditable rather than rhetorical.
+
+**`Approval.signature` is not a signature.** In `server.ts` the approve handler builds:
+
+```ts
+'unverified-noncrypto-token-' + Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('')
+```
+
+This is 64 hex characters from `Math.random()`. It is not an HMAC, not Ed25519, and
+not a function of the approved payload. The value was previously prefixed
+`hmac-sha256-sig-`, which asserted an algorithm that never ran. A repo-wide search
+shows **no code path ever recomputes or verifies this field** — it is stored, returned
+in API responses, and displayed in the UI.
+
+**The HITL audit ledger is not immutable and not anchored.** `server.ts` keeps the
+ledger in a module-local `approvals` array. Every `fs.*` call in the file is one of:
+`.env` loading, shell discovery, the admin-token file read, or cwd validation. There is
+no ledger read and no ledger write. Entries are therefore lost on restart, and
+`/api/hitl/audit/verify` reports `UNVERIFIED` — never `INTACT`.
+
+**Persistence exists, but in a different ledger.** `src/services/sovereignMcpServer.ts`
+appends seq-numbered records to `data/audit-ledger.jsonl` and rehydrates them at
+startup. That is a real, durable chain. It is **not** the ledger the HITL verify
+endpoint reads, and its durability does not make the HITL endpoint verifiable.
+
+**Net position.** There is currently **no non-repudiation control** in the approval
+path: an approved-and-executed action leaves a self-issued, unverifiable, in-memory
+record. THR-03 must remain open until an external attestation anchor or a real
+signature scheme is implemented and verified by execution.

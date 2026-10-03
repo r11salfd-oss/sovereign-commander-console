@@ -70,10 +70,17 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { platform, arch, EOL } from 'node:os';
+
+// The real LSP transport. LSP speaks Content-Length header framing, not the
+// newline-delimited JSON-RPC used for MCP, so a separate client is REQUIRED —
+// reusing the MCP client would silently freeze on the first frame. This module is
+// the measured implementation; `lspStatus()` below is now its entry point rather
+// than an honest admission that no transport exists.
+import { runLspProbes, toProberLspReport } from './lsp_prober';
 
 import {
   HOST_PROBER_CHAIN_KEY_ID,
@@ -1618,8 +1625,117 @@ export async function sweep(config: ProberConfig, options: SweepOptions = {}): P
  * The consumer-side sanitizer in `host_prober_client.ts` already refuses to
  * believe any LSP state while `transportImplemented` is false, so nothing can
  * accidentally start reporting a fabricated READY.
+ *
+ * ── SEAM NOW WIRED (2026-10-02) ──────────────────────────────────────────────
+ * All three requirements above are met by `lsp_prober.ts`, which implements a
+ * byte-accurate Content-Length framer (byte counts, not character counts — the
+ * distinction is real for any non-ASCII payload), issues `initialize`, reads
+ * `serverInfo`, and performs a capability probe. `toProberLspReport` projects
+ * that measured report onto this prober's public contract, which is what makes
+ * `transportImplemented` genuinely true rather than merely asserted.
+ *
+ * The previous body of this function stamped every entry UNVERIFIABLE with
+ * `transportImplemented: false`. That was honest, and it is now obsolete: it
+ * refused to measure what CAN be measured. Both states are retained in spirit —
+ * anything the transport cannot conclude is still reported UNVERIFIABLE, never
+ * promoted — but a server that answers `initialize` is now reported ONLINE on the
+ * strength of that answer.
  */
-export function lspStatus(config: ProberConfig): LspProbeReport {
+export async function lspStatus(config: ProberConfig): Promise<LspProbeReport> {
+  const inventory = buildInventory(config);
+  if (inventory.lspKeys.length === 0) {
+    return buildUnverifiableLspReport(
+      [],
+      'INVENTORY_UNRESOLVED',
+      'No LSP inventory could be enumerated from any readable manifest.',
+      new Date().toISOString()
+    );
+  }
+
+  // Manifest precedence mirrors `buildInventory`: the repo copy is authoritative
+  // for declared entrypoints, the host copy is the cross-check. Pointing the LSP
+  // client at the same manifest the MCP sweep used keeps one inventory for both.
+  const manifestPath = join(config.root, 'manifest.json');
+  const repoManifestPath = join(config.repoRoot, 'config', 'servers_center_manifest.json');
+
+  // The scratch workspace MUST exist before any child is spawned.
+  //
+  // Measured, not assumed: on Windows, `child_process.spawn` reports ENOENT for a
+  // MISSING `cwd` exactly as it does for a missing executable. A probe run against
+  // a workspace root that was never created therefore reported
+  // `dependency-missing` for every server and looked like a broken toolchain when
+  // in fact every launcher was present and working.
+  //
+  // Creating it here also keeps the probe side-effect-free: language servers are
+  // pointed at an empty scratch directory, never at the real repository or the E:
+  // tree, so a server that indexes or watches cannot touch production data.
+  const workspaceRoot = join(config.repoRoot, '.lsp-probe-workspace');
+  try {
+    mkdirSync(workspaceRoot, { recursive: true });
+  } catch (err) {
+    return buildUnverifiableLspReport(
+      inventory.lspKeys,
+      'SPAWN_FAILED',
+      `Could not create the scratch LSP workspace at ${workspaceRoot} (${
+        err instanceof Error ? err.message : String(err)
+      }). No LSP handshake was attempted, so no server state is known.`,
+      new Date().toISOString()
+    );
+  }
+
+  try {
+    const measured = await runLspProbes({
+      manifestPath: existsSync(repoManifestPath) ? repoManifestPath : manifestPath,
+      serversCenterRoot: config.root,
+      workspaceRoot,
+      stepTimeoutMs: Math.max(2000, Math.floor(config.phaseTimeoutMs / 2)),
+      totalDeadlineMs: config.runDeadlineMs,
+      probeTimeoutMs: config.perChildTimeoutMs,
+      onlyIds: null,
+      // Minimal, explicit environment: no host secrets are inherited by language
+      // server child processes.
+      // Minimal environment, not the full host environment. Two Windows-specific
+      // variables are load-bearing rather than optional: PATHEXT is what lets
+      // spawn resolve a launcher with no extension, and SystemRoot is required by
+      // the loader before any DLL resolves — omit it and a valid executable still
+      // fails. No host secrets are inherited.
+      nodeEnv: {
+        PATH: process.env.PATH ?? '',
+        SystemRoot: process.env.SystemRoot ?? '',
+        PATHEXT: process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD',
+        ComSpec: process.env.ComSpec ?? '',
+        // APPDATA is load-bearing on Windows, not cosmetic: `pyright-langserver`
+        // is a CPython console script whose package lives in the per-user
+        // site-packages directory, and CPython derives that directory from
+        // %APPDATA%. Without it the interpreter raises
+        // ModuleNotFoundError and exits 1 before a single handshake byte — which
+        // is a broken PROBE ENVIRONMENT, not a broken language server. Measured:
+        // HOMEDRIVE+HOMEPATH alone do not fix it; APPDATA alone does.
+        APPDATA: process.env.APPDATA ?? '',
+        LOCALAPPDATA: process.env.LOCALAPPDATA ?? '',
+      },
+    });
+
+    return toProberLspReport(measured, {
+      chainKeyId: HOST_PROBER_CHAIN_KEY_ID,
+      proberVersion: PROBER_VERSION,
+    }) as unknown as LspProbeReport;
+  } catch (err) {
+    // A transport-level failure must not read as "all servers are unhealthy".
+    // It means WE could not measure, which is a different claim entirely.
+    return buildUnverifiableLspReport(
+      inventory.lspKeys,
+      'SPAWN_FAILED',
+      `The LSP transport was invoked but failed before any verdict could be established: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      new Date().toISOString()
+    );
+  }
+}
+
+/** @deprecated Retained only as the documented pre-implementation behaviour. */
+function lspStatusWithoutTransport(config: ProberConfig): LspProbeReport {
   const inventory = buildInventory(config);
   const generatedAt = new Date().toISOString();
   const reasonText =
@@ -1640,6 +1756,10 @@ export function lspStatus(config: ProberConfig): LspProbeReport {
     measured: false,
     transportImplemented: false,
     framing: 'CONTENT_LENGTH_HEADERS',
+    // Superseded path (no transport). It cannot classify anything, so nothing is
+    // scoreable — the same fail-safe direction as the degraded builder.
+    category: 'unclassified' as const,
+    scoreable: false,
   }));
 
   if (servers.length === 0) {
@@ -1658,6 +1778,12 @@ export function lspStatus(config: ProberConfig): LspProbeReport {
       online: 0,
       offline: 0,
       unverifiable: servers.length,
+      // No transport means no measurement and no classification, so the scoring
+      // denominator is zero rather than the inventory size.
+      declaredTotal: servers.length,
+      measurableTotal: 0,
+      measurableOnline: 0,
+      nonLanguageServerTotal: 0,
     },
     servers,
   };
@@ -1833,7 +1959,10 @@ export function createProber(config: ProberConfig): { handle: ProberHandle; serv
       }
 
       if (path === '/probe/lsp/status') {
-        sendJson(res, 200, lspStatus(config));
+        // Awaited: the LSP sweep spawns language servers, so this is a measurement,
+        // not a lookup. It is deliberately NOT cached — an LSP handshake costs far
+        // more than an MCP one, and a stale LSP verdict would be worse than none.
+        sendJson(res, 200, await lspStatus(config));
         return;
       }
 

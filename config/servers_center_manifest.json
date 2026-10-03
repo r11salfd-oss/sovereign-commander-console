@@ -1,5 +1,5 @@
 {
-  "manifest_version": "2.0.0",
+  "manifest_version": "2.1.0",
   "chain_key_id": "360ea36c28e66d9d",
   "last_reconciled": "2026-10-02",
   "reconciled_against": [
@@ -10,7 +10,25 @@
   "provenance": {
     "handshakesExecuted": 0,
     "handshakeOutcomeRecorded": "NOT_EXECUTED_BY_THIS_MANIFEST",
-    "note": "This document records INVENTORY and LAUNCH FEASIBILITY only. No MCP `initialize`/`tools/list` handshake and no LSP `initialize` was executed while producing it, therefore no per-entry reachability verdict is recorded anywhere in this file. Reachability is measured by the host-side probers (scripts/host_prober.ts, scripts/lsp_prober.ts) and nowhere else. scripts/validate_servers_manifest.ts validates structure and cross-document consistency; it measures presence, never reachability."
+    "note": "This document records INVENTORY and LAUNCH FEASIBILITY only. No MCP `initialize`/`tools/list` handshake and no LSP `initialize` was executed while producing it, therefore no per-entry reachability verdict is recorded anywhere in this file. Reachability is measured by the host-side probers (scripts/host_prober.ts, scripts/lsp_prober.ts) and nowhere else. scripts/validate_servers_manifest.ts validates structure and cross-document consistency; it measures presence, never reachability.",
+    "classificationCorrection": {
+      "revision": "2.1.0",
+      "whatWasWrong": "Every entry under `lsp` was filed as though it were a Language Server Protocol server. Three of the six entries are NOT language servers and never were. This is a MISCLASSIFICATION in the inventory, not a missing server, and it was silently inflating the LSP reachability DENOMINATOR from 3 to 6 — which depressed every genuine language server's measured coverage ratio by counting compiler CLIs, linter CLIs and a bare SDK against them.",
+      "whatChanged": "Each `lsp` entry now carries an explicit `category`. `language-server` means a real LSP endpoint exists. The other three categories mean a real asset exists but it is not an LSP endpoint. NOTHING WAS DELETED: all six entries remain declared, all six are still probed and reported, and `lsp.servers` still lists all six. Only the SCORE DENOMINATOR is restricted to `category: \"language-server\"`, and both numbers are published side by side (declaredTotal and measurableTotal) so no consumer can be shown only the flattering one.",
+      "evidenceFromThisDocument": [
+        "lsp.typescript.note: \"The directory holds the TypeScript compiler package, NOT a language server.\"",
+        "lsp.typescript.handshakeBlockers[2]: \"The .bin directory contains only tsc and tsserver, which are a compiler CLI and a compiler daemon, not LSP servers.\"",
+        "lsp.eslint.note: \"The directory holds the ESLint package, NOT a language server.\"",
+        "lsp.eslint.handshakeBlockers[2]: \"The .bin directory contains only the eslint CLI, which speaks its own protocol and is not an LSP server.\"",
+        "lsp.dotnet.note: \"Only the .NET SDK is installed; no C# language server was found.\"",
+        "lsp.dotnet.handshakeBlockers[0]: \"No C# language server launcher is installed: neither omnisharp nor csharp-ls is on PATH.\"",
+        "lsp.dotnet.handshakeBlockers[1]: \"The .NET SDK is present but the SDK is a toolchain, not an LSP endpoint.\"",
+        "lsp.bash.note / lsp.yaml.note / lsp.pyright.command: a resolvable launcher that IS an LSP endpoint exists for exactly these three."
+      ],
+      "reproducedOnDisk": "scripts/host_prober.ts --once (host, 2026-10-02): lsp.typescript -> \"the entry directory's .bin holds [tsc, tsserver]\"; lsp.eslint -> \"the entry directory's .bin holds [acorn, eslint, node-which]\"; lsp.dotnet -> \"no Servers Center asset is declared for this server\". Independent confirmation of the classification above, from the probers rather than from this document.",
+      "explicitlyNotClaimed": "This correction does NOT install a TypeScript, ESLint or C# language server, does NOT change any reachability verdict, and does NOT make any server healthier. It only stops counting three non-LSP toolchains against three real language servers."
+    },
+    "scoreDenominatorContract": "The LSP reachability score denominator is the number of declared entries whose `category` is `language-server`. `declaredTotal` (every entry) and `measurableTotal` (language servers only) are BOTH published by scripts/lsp_prober.ts and by src/services/serversCenterRegistry.ts; a consumer that displays only one of them is displaying a partial picture by its own choice."
   },
   "root": {
     "default": "E:\\Servers-Center",
@@ -169,6 +187,8 @@
   },
   "lsp": {
     "typescript": {
+      "category": "compiler-cli",
+      "categoryJustification": "This document's own note and third handshakeBlocker both state that the asset is the TypeScript compiler package and that .bin holds only `tsc` (compiler CLI) and `tsserver` (compiler daemon) — neither speaks LSP. Re-measured on the host 2026-10-02: .bin holds exactly [tsc, tsserver]. No TypeScript language server is declared, installed or on PATH, so this entry is not an LSP endpoint and must not sit in the LSP reachability denominator.",
       "version": "5.9.3",
       "version_source": "PACKAGE_JSON_ON_DISK",
       "entry": "servers/lsp/typescript",
@@ -193,6 +213,8 @@
       ]
     },
     "eslint": {
+      "category": "linter-cli",
+      "categoryJustification": "This document's own note and third handshakeBlocker both state that the asset is the ESLint package and that .bin holds only `eslint`, which \"speaks its own protocol and is not an LSP server\". Re-measured on the host 2026-10-02: .bin holds [acorn, eslint, node-which] — a parser, the linter CLI and its resolver helper. No ESLint language server is declared, installed or on PATH, so this entry is not an LSP endpoint and must not sit in the LSP reachability denominator.",
       "version": "10.11.0",
       "version_source": "PACKAGE_JSON_ON_DISK",
       "entry": "servers/lsp/eslint",
@@ -217,6 +239,8 @@
       ]
     },
     "bash": {
+      "category": "language-server",
+      "categoryJustification": "A real LSP endpoint exists and is resolvable: node_modules/bash-language-server owns the .bin/bash-language-server launcher and answers a Content-Length framed `initialize`. MEASURED ONLINE by scripts/lsp_prober.ts on the host, not asserted here.",
       "version": "5.8.1",
       "version_source": "PACKAGE_JSON_ON_DISK",
       "entry": "servers/lsp/bash",
@@ -238,6 +262,8 @@
       "handshakeBlockers": []
     },
     "yaml": {
+      "category": "language-server",
+      "categoryJustification": "A real LSP endpoint exists and is resolvable: node_modules/yaml-language-server owns the .bin/yaml-language-server launcher and answers a Content-Length framed `initialize`. MEASURED ONLINE by scripts/lsp_prober.ts on the host, not asserted here.",
       "version": "1.24.0",
       "version_source": "PACKAGE_JSON_ON_DISK",
       "entry": "servers/lsp/yaml",
@@ -259,6 +285,8 @@
       "handshakeBlockers": []
     },
     "pyright": {
+      "category": "language-server",
+      "categoryJustification": "A real LSP endpoint exists and is resolvable: pyright-langserver is a vscode-languageserver-based Python server and it answers a Content-Length framed `initialize` with 16 advertised capabilities. MEASURED ONLINE by scripts/lsp_prober.ts on the host once the declared `command.env.passThrough` below is honoured, not asserted here.",
       "version": "1.1.414",
       "version_source": "EXECUTED_VERSION_FLAG",
       "entryKind": "external-toolchain",
@@ -273,12 +301,19 @@
         "argvShape": ["executable", "...args"],
         "launcherCandidates": ["pyright-langserver"],
         "args": ["--stdio"],
+        "argsNote": "`--stdio` is REQUIRED, not decorative. Measured: with the full host environment and no arguments, pyright-langserver exits 1 with \"Error: Connection input stream is not set. Use arguments of createConnection or set command line parameters: '--node-ipc', '--stdio' or '--socket={number}'\".",
+        "env": {
+          "passThrough": ["APPDATA"],
+          "passThroughNote": "pyright-langserver is a CPython entry-point shim, and the `pyright` package lives in the PER-USER site-packages at C:\\Users\\<user>\\AppData\\Roaming\\Python\\Python314\\site-packages. CPython derives its user-site directory from %APPDATA%; a child process started without APPDATA therefore cannot import the package at all. Measured consequence: the interpreter exits 1 with `ModuleNotFoundError: No module named 'pyright'` before writing a single byte to stdout. Declared here so scripts/lsp_prober.ts can inject exactly this one variable from its own (host-side) environment instead of guessing, and so no host secret is inherited — only names are declared, and only values of declared names are ever read."
+        },
         "nonRunnablePlatforms": []
       },
       "handshakeFeasibility": "ELIGIBLE_NOT_EXECUTED",
       "handshakeBlockers": []
     },
     "dotnet": {
+      "category": "sdk-no-lsp-server",
+      "categoryJustification": "This document's own note and first two handshakeBlockers state that only the .NET SDK is installed, that neither omnisharp nor csharp-ls is on PATH, and that \"the SDK is a toolchain, not an LSP endpoint\". There is NO asset of any kind for this entry and the prober has nothing to spawn. Counting it in the LSP reachability denominator would penalise three real language servers for a toolchain that was never a language server and cannot become one without an install.",
       "version": "10.0.401",
       "version_source": "EXECUTED_VERSION_FLAG",
       "entryKind": "external-toolchain",

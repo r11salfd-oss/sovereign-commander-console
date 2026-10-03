@@ -8,3 +8,27 @@ coverage/
 !.env.example
 scratch/
 screenshots/
+
+# Sovereign audit ledger (append-only, host-owned, may contain sensitive action detail)
+data/
+
+# ============================================================
+# QUARANTINE GUARD — the quarantine itself lives OUTSIDE this repo
+# Chain Key: 360ea36c28e66d9d
+#
+# The quarantine root is  C:\Users\AA5II\kali\qui\
+#   ├── .env.bak-*        rotated/retired credential snapshots, revoked
+#   └── bun.lock          isolated divergent lockfile (Gate 5 blocker)
+#
+# It was briefly placed INSIDE this repository, then moved back out: a tree of
+# live credentials is not a safe resident of a directory tree that gets cloned,
+# archived, zipped, and scanned by every tool that walks the workspace. Keeping
+# it outside removes an entire class of accidental disclosure instead of
+# guarding against it with ignore rules.
+#
+# The rule below is therefore a BACKSTOP, not the primary defence. If a copy of
+# that directory ever reappears here, git will still refuse to stage it.
+# ============================================================
+kali/
+kali/**
+kali/qui/

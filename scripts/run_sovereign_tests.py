@@ -94,9 +94,13 @@ TEST_SUITES: list[SuiteTarget] = [
         description="Verifies JSON-RPC 2.0 protocol endpoints, tool discovery, and error envelopes.",
     ),
     SuiteTarget(
-        name="Servers Center (6 MCP + 6 LSP) Matrix",
+        name="Servers Center Registry Inventory (7 MCP + 6 LSP entries)",
         script_rel_path="scripts/test_servers_center_integration.py",
-        description="Verifies live inventory, language servers, and unified MCP server registry.",
+        description=(
+            "Verifies the committed registry inventory and that the LSP scoring "
+            "denominator equals the language-server category count. Does NOT verify "
+            "readiness."
+        ),
     ),
     SuiteTarget(
         name="Gemini API SDK & Modern Model Matrix",
@@ -178,8 +182,19 @@ def main() -> int:
     print(f"Cryptographic Chain Key ID: {CHAIN_KEY_ID}")
 
     if failed_count == 0:
-        print("\n✨ ALL QUALITY GATES VERIFIED UNDER SOVEREIGN SPECIFICATION.")
-        print(f"🛡️  Cryptographic Seal: SEC-CI-QUALITY-GATE-{CHAIN_KEY_ID}-VERIFIED")
+        # The old banner printed "ALL QUALITY GATES VERIFIED" followed by
+        # `Cryptographic Seal: SEC-CI-QUALITY-GATE-...-VERIFIED`. Both overstated
+        # what this runner can establish. It runs test suites; it does not verify
+        # a cryptographic seal, and a green run says only that the assertions
+        # currently written hold — not that the SYSTEM is free of defects the
+        # assertions do not cover. A seal here is an attestation of integrity that
+        # nothing in this file computes, so it is removed. Exit code 0 is the
+        # real signal and it is unchanged.
+        print("\n✨ ALL SUITES PASSED UNDER SOVEREIGN SPECIFICATION.")
+        print("   Scope: the suites listed above executed and their assertions held.")
+        print("   NOT certified: system integrity, chain-of-custody, or any property")
+        print("   no listed suite asserts. No cryptographic seal is minted by this")
+        print("   runner, because none is computed here.")
         print("=" * 80)
         return 0
     else:

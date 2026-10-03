@@ -60,6 +60,53 @@ import { fileURLToPath } from 'node:url';
 export type LspProbeState = 'ONLINE' | 'OFFLINE' | 'UNVERIFIABLE';
 
 /**
+ * What an `lsp` inventory entry ACTUALLY IS.
+ *
+ * Doctrine: only a `language-server` may sit in the LSP reachability
+ * denominator. Filing a compiler CLI, a linter CLI or a bare SDK under `lsp`
+ * and then dividing by all of them is a miscategorisation, not a measurement —
+ * it charges three real language servers for assets that were never LSP
+ * endpoints. Nothing is deleted: every category is still declared, still probed
+ * and still reported. Only the denominator is restricted, and both the declared
+ * and the measurable totals are published side by side.
+ *
+ * The categories are the manifest's own conclusion, quoted per entry in
+ * `categoryJustification` — e.g. `typescript`/`eslint`/`dotnet` are demoted on
+ * the strength of this manifest's `note` and `handshakeBlockers` text, not on
+ * this module's opinion.
+ */
+export type LspEntryCategory =
+  | 'language-server'
+  | 'compiler-cli'
+  | 'linter-cli'
+  | 'sdk-no-lsp-server'
+  | 'unclassified';
+
+/** Every category this module understands, in manifest order. */
+export const LSP_ENTRY_CATEGORIES: readonly LspEntryCategory[] = [
+  'language-server',
+  'compiler-cli',
+  'linter-cli',
+  'sdk-no-lsp-server',
+  'unclassified',
+];
+
+/**
+ * The ONLY categories permitted in the reachability denominator.
+ *
+ * `unclassified` is deliberately excluded: an entry nobody has classified is
+ * unmeasured, and unmeasured must never earn credit. Excluding it keeps a
+ * missing `category` field on the conservative side (it can only lower a
+ * score, never raise one).
+ */
+export const LSP_SCORE_DENOMINATOR_CATEGORIES: readonly LspEntryCategory[] = ['language-server'];
+
+/** True when an entry of this category is entitled to sit in the denominator. */
+export function isScoreableCategory(category: LspEntryCategory): boolean {
+  return LSP_SCORE_DENOMINATOR_CATEGORIES.includes(category);
+}
+
+/**
  * Canonical wire value for the LSP probe method.
  *
  * MUST equal the literal in `scripts/host_prober_client.ts`
@@ -128,6 +175,24 @@ export interface LspCapabilityCounts {
 export interface LspServerProbeResult {
   readonly id: string;
   readonly state: LspProbeState;
+  /**
+   * What this entry actually is, per the manifest's `category` field. Published
+   * per row so no consumer has to infer it, and so the demoted entries remain
+   * fully visible and individually accountable.
+   */
+  readonly category: LspEntryCategory;
+  /**
+   * True only for `category: language-server`. This is the flag the reachability
+   * denominator is built from. A demoted entry keeps its state, its measurement
+   * and its reason — it simply is not permitted to dilute the ratio.
+   */
+  readonly scoreable: boolean;
+  /**
+   * Operator-readable reason this entry is excluded from the denominator. An
+   * exclusion nobody can read is indistinguishable from a quiet score adjustment,
+   * so the manifest's justification travels with the measured row.
+   */
+  readonly categoryJustification?: string;
   readonly probeMethod: typeof PROBE_METHOD_LSP_CONTENT_LENGTH;
   readonly lastProbedAt: string;
   readonly durationMs: number;
@@ -169,8 +234,34 @@ export interface LspServerProbeResult {
 
 export interface LspProbeReport {
   readonly summary: {
-    /** Declared servers evaluated — one `servers[]` entry each, no padding. */
+    /**
+     * EVERY declared entry evaluated — one `servers[]` row each, no padding.
+     *
+     * This is the complete inventory and stays exactly that. It is NOT the
+     * reachability denominator; see `measurableTotal`.
+     */
     readonly total: number;
+    /**
+     * Alias of `total`, named for the consumer that would otherwise be misled.
+     * The LSP inventory declared by the manifest, miscategorised entries
+     * included.
+     */
+    readonly declaredTotal: number;
+    /**
+     * THE DENOMINATOR FOR REACHABILITY: declared entries whose category is
+     * `language-server`. A compiler CLI, a linter CLI or a bare SDK is not
+     * permitted to dilute the ratio of the servers that are.
+     */
+    readonly measurableTotal: number;
+    /** ONLINE, restricted to `measurableTotal`. The score numerator. */
+    readonly measurableOnline: number;
+    /** OFFLINE, restricted to `measurableTotal`. */
+    readonly measurableOffline: number;
+    /** UNVERIFIABLE, restricted to `measurableTotal`. */
+    readonly measurableUnverifiable: number;
+    /** Declared entries that are NOT language servers, by category. */
+    readonly nonLanguageServerTotal: number;
+    readonly categoryCounts: Readonly<Record<LspEntryCategory, number>>;
     readonly online: number;
     readonly offline: number;
     readonly unverifiable: number;
@@ -183,9 +274,15 @@ export interface LspProbeReport {
   };
   readonly denominator: {
     readonly declaredInManifest: number;
+    /** Declared entries that are genuine language servers. */
+    readonly declaredLanguageServers: number;
+    /** Declared entries that exist as inventory but are not LSP endpoints. */
+    readonly declaredNonLanguageServers: number;
     readonly declaredEntryDirectoryExists: number;
     readonly languageServerLauncherResolved: number;
     readonly handshakeCompleted: number;
+    /** Plain-language statement of which number a consumer must divide by. */
+    readonly scoreDenominator: string;
   };
   readonly servers: readonly LspServerProbeResult[];
   readonly generatedAt: string;
@@ -784,6 +881,29 @@ const LAUNCHER_ARGS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
+ * Fallback environment pass-through, used only when the manifest declares none.
+ *
+ * MEASURED on this host (2026-10-02), not assumed. `pyright-langserver` is a
+ * CPython entry-point shim and the `pyright` package lives in the PER-USER
+ * site-packages under `%APPDATA%\Python\Python314\site-packages`. CPython
+ * derives the user-site directory from `%APPDATA%`, so a child launched without
+ * APPDATA cannot import the package and the interpreter exits 1 with
+ * `ModuleNotFoundError: No module named 'pyright'` before writing a byte to
+ * stdout — which the prober correctly, but misleadingly, reports as
+ * `EXIT_NONZERO_BEFORE_HANDSHAKE`.
+ *
+ * Reproduced and bisected: the host prober's four-variable child environment
+ * fails in ~85ms; the same environment plus APPDATA answers `initialize` in
+ * ~340ms. HOMEDRIVE/HOMEPATH alone do NOT fix it, which is what identifies
+ * APPDATA specifically as the variable CPython needs.
+ *
+ * NAMES ONLY. No value is ever read here, logged, or written to the report.
+ */
+const LAUNCHER_ENV_PASSTHROUGH: Readonly<Record<string, readonly string[]>> = {
+  pyright: ['APPDATA'],
+};
+
+/**
  * Candidates used only when the manifest does not authorise any. The
  * manifest's `command.launcherCandidates` is authoritative when present.
  *
@@ -978,8 +1098,12 @@ export interface ProbeOptions {
   readonly declaredVersion: string;
   readonly declaredSource: string;
   readonly declaredEntryKind: string;
+  readonly declaredCategory: LspEntryCategory;
+  readonly declaredCategoryJustification?: string;
   readonly declaredLauncherCandidates: readonly string[];
   readonly declaredArgs: readonly string[] | null;
+  /** Env var NAMES the launcher needs; resolved from process.env at spawn. */
+  readonly declaredEnvPassThrough: readonly string[] | null;
   readonly declaredFeasibility: string;
   readonly declaredBlockers: readonly string[];
   readonly serversCenterRoot: string;
@@ -1174,6 +1298,11 @@ export async function probeLspServer(options: ProbeOptions): Promise<LspServerPr
 
   const base = {
     id: options.id,
+    category: options.declaredCategory,
+    // Recorded here so the score denominator is auditable from any single row,
+    // not only from the aggregate.
+    scoreable: isScoreableCategory(options.declaredCategory),
+    categoryJustification: options.declaredCategoryJustification,
     probeMethod: PROBE_METHOD_LSP_CONTENT_LENGTH as typeof PROBE_METHOD_LSP_CONTENT_LENGTH,
     lastProbedAt,
     declared: {
@@ -1222,6 +1351,37 @@ export async function probeLspServer(options: ProbeOptions): Promise<LspServerPr
     // Keep probe side effects minimal and greppable.
     ELECTRON_RUN_AS_NODE: '1',
   };
+
+  // Declared environment pass-through. The host prober deliberately hands down a
+  // four-variable environment (PATH/SystemRoot/PATHEXT/ComSpec) so no host secret
+  // is inherited. That is correct policy, but it is insufficient for a launcher
+  // that is an INTERPRETER shim: a CPython entry point cannot locate a per-user
+  // site-packages without %APPDATA%, and dies before speaking any protocol.
+  //
+  // Only NAMES declared by the manifest (or by the measured fallback table) are
+  // read, only from the prober's own process.env, and only when present. No
+  // value is logged or published. An absent variable is reported as absent rather
+  // than substituted, so a genuine missing-variable failure stays visible instead
+  // of being masked by an invented default.
+  const requestedEnv =
+    options.declaredEnvPassThrough !== null && options.declaredEnvPassThrough.length > 0
+      ? options.declaredEnvPassThrough
+      : LAUNCHER_ENV_PASSTHROUGH[options.id] ?? [];
+  const injectedEnvNames: string[] = [];
+  const missingEnvNames: string[] = [];
+  for (const name of requestedEnv) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.length > 0) {
+      env[name] = value;
+      injectedEnvNames.push(name);
+    } else {
+      missingEnvNames.push(name);
+    }
+  }
+  if (injectedEnvNames.length > 0) trace(`injected declared env: ${injectedEnvNames.join(', ')} (values never logged)`);
+  if (missingEnvNames.length > 0) {
+    trace(`declared env absent from this host and NOT injected: ${missingEnvNames.join(', ')}`);
+  }
 
   let session: LspProcessSession;
   try {
@@ -1300,10 +1460,19 @@ export async function probeLspServer(options: ProbeOptions): Promise<LspServerPr
       }
       if (session.exited) {
         const stderr = session.stderrText;
+        // The interpreter's own traceback is the primary evidence here and it is
+        // the ONLY thing that distinguishes "this server is broken" from "the
+        // launcher could not boot in the environment we gave it". Publish the
+        // exit code and the full captured stderr, and name the launcher argv.
+        const launch = `${launcher.command}${launcher.args.length > 0 ? ` ${launcher.args.join(' ')}` : ''}`;
         return finish(
           offline(
             'child-exited-early',
-            `process exited before answering initialize${stderr.length > 0 ? `: ${redact(stderr)}` : ''}`,
+            `process exited (code=${String(session.exitInfo?.code)}, signal=${String(session.exitInfo?.signal)}) ` +
+              `before answering initialize; launched as [${launch}]` +
+              (injectedEnvNames.length > 0 ? ` with declared env [${injectedEnvNames.join(', ')}]` : ' with NO declared env injected') +
+              (missingEnvNames.length > 0 ? `, declared-but-absent [${missingEnvNames.join(', ')}]` : '') +
+              (stderr.length > 0 ? `. Interpreter output: ${redact(stderr)}` : '. The interpreter produced no output on stderr.'),
           ),
           { launcher },
         );
@@ -1554,10 +1723,24 @@ export interface DeclaredLspServer {
   readonly source: string;
   /** `directory` when an E:\Servers-Center asset exists, else `external-toolchain`. */
   readonly entryKind: string;
+  /**
+   * What the entry actually IS. Defaults to `unclassified` when the manifest
+   * omits or misspells it — never silently to `language-server`, because an
+   * unclassified entry must not be able to earn credit.
+   */
+  readonly category: LspEntryCategory;
+  /** Operator-readable reason this entry is excluded from the denominator, if excluded. */
+  readonly categoryJustification?: string;
   /** Launcher binary names the manifest authorises for this server. */
   readonly launcherCandidates: readonly string[];
   /** Extra argv the manifest declares (e.g. `start` for bash-language-server). */
   readonly args: readonly string[];
+  /**
+   * Environment variable NAMES the launcher needs in order to start at all.
+   * Names only. Values are read from the prober's own host environment at spawn
+   * time and are never recorded in the report.
+   */
+  readonly envPassThrough: readonly string[];
   /**
    * The manifest's own reachability *claim*. Recorded purely so the report can
    * state whether measurement agrees with the declared feasibility. It is never
@@ -1569,9 +1752,11 @@ export interface DeclaredLspServer {
 
 interface ManifestLspEntry {
   readonly entry?: unknown;
+  readonly categoryJustification?: unknown;
   readonly version?: unknown;
   readonly source?: unknown;
   readonly entryKind?: unknown;
+  readonly category?: unknown;
   readonly handshakeFeasibility?: unknown;
   readonly handshakeBlockers?: unknown;
   readonly command?: {
@@ -1579,6 +1764,7 @@ interface ManifestLspEntry {
     readonly args?: unknown;
     readonly transport?: unknown;
     readonly executable?: unknown;
+    readonly env?: { readonly passThrough?: unknown };
   };
 }
 
@@ -1588,6 +1774,28 @@ interface ManifestShape {
 
 function stringArray(value: unknown): readonly string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+/**
+ * Read a manifest `category`, refusing to guess.
+ *
+ * An absent, misspelled or unknown value resolves to `unclassified`, which is
+ * EXCLUDED from the reachability denominator. That direction is deliberate: a
+ * manifest that forgets to classify an entry must lose credit for it, never
+ * gain it. A wrong guess in the other direction would inflate the score.
+ */
+export function parseEntryCategory(value: unknown): LspEntryCategory {
+  return typeof value === 'string' && (LSP_ENTRY_CATEGORIES as readonly string[]).includes(value)
+    ? (value as LspEntryCategory)
+    : 'unclassified';
+}
+
+/** Case-insensitive lookup of an entry's `command.env.passThrough` names. */
+function envPassThroughNames(command: { readonly env?: { readonly passThrough?: unknown } } | undefined): readonly string[] {
+  const raw = command?.env?.passThrough;
+  return Array.isArray(raw)
+    ? [...new Set(raw.filter((item): item is string => typeof item === 'string' && item.length > 0))]
+    : [];
 }
 
 export function loadDeclaredLspServers(manifestPath: string): readonly DeclaredLspServer[] {
@@ -1604,8 +1812,14 @@ export function loadDeclaredLspServers(manifestPath: string): readonly DeclaredL
       version: typeof value.version === 'string' ? value.version : 'unknown',
       source: typeof value.source === 'string' ? value.source : 'unknown',
       entryKind: typeof value.entryKind === 'string' ? value.entryKind : 'unspecified',
+      category: parseEntryCategory(value.category),
+      // Carried through so an exclusion from the scoring denominator is always
+      // readable. An exclusion nobody can see is indistinguishable from a quiet
+      // score adjustment.
+      categoryJustification: typeof value.categoryJustification === 'string' && value.categoryJustification.trim() ? value.categoryJustification : undefined,
       launcherCandidates: stringArray(command.launcherCandidates),
       args: stringArray(command.args),
+      envPassThrough: envPassThroughNames(command),
       handshakeFeasibility:
         typeof value.handshakeFeasibility === 'string' ? value.handshakeFeasibility : 'UNSPECIFIED',
       handshakeBlockers: stringArray(value.handshakeBlockers),
@@ -1645,8 +1859,11 @@ export async function runLspProbes(options: RunProbesOptions): Promise<LspProbeR
           declaredVersion: server.version,
           declaredSource: server.source,
           declaredEntryKind: server.entryKind,
+          declaredCategory: server.category,
+          declaredCategoryJustification: server.categoryJustification,
           declaredLauncherCandidates: server.launcherCandidates,
           declaredArgs: server.args,
+          declaredEnvPassThrough: server.envPassThrough,
           declaredFeasibility: server.handshakeFeasibility,
           declaredBlockers: server.handshakeBlockers,
           serversCenterRoot: options.serversCenterRoot,
@@ -1665,6 +1882,8 @@ export async function runLspProbes(options: RunProbesOptions): Promise<LspProbeR
       results.push({
         id: server.id,
         state: 'UNVERIFIABLE',
+        category: server.category,
+        scoreable: isScoreableCategory(server.category),
         probeMethod: PROBE_METHOD_LSP_CONTENT_LENGTH,
         lastProbedAt: new Date().toISOString(),
         durationMs: 0,
@@ -1695,6 +1914,10 @@ export async function runLspProbes(options: RunProbesOptions): Promise<LspProbeR
     results.push({
       id,
       state: 'UNVERIFIABLE',
+      // An id with no manifest entry cannot be shown to be a language server, so
+      // it is unclassified and therefore outside the denominator.
+      category: 'unclassified',
+      scoreable: false,
       probeMethod: PROBE_METHOD_LSP_CONTENT_LENGTH,
       lastProbedAt: new Date().toISOString(),
       durationMs: 0,
@@ -1725,6 +1948,47 @@ export async function runLspProbes(options: RunProbesOptions): Promise<LspProbeR
   const launcherResolved = results.filter((row) => row.launcher !== null).length;
   const handshakeCompleted = results.filter((row) => row.initialize.answered).length;
 
+  // ── The denominator correction ──────────────────────────────────────────────
+  // Both populations are computed here and BOTH are published below. The
+  // demoted entries are never removed from `servers[]`, never hidden from any
+  // consumer, and never reported as healthy — they are simply not permitted to
+  // divide the ratio of the servers that actually speak LSP.
+  const scoreableRows = results.filter((row) => isScoreableCategory(row.category));
+  const declaredLanguageServers = scoreableRows.length;
+  const declaredNonLanguageServers = results.length - declaredLanguageServers;
+  const measurableOnline = scoreableRows.filter((row) => row.state === 'ONLINE').length;
+  const measurableOffline = scoreableRows.filter((row) => row.state === 'OFFLINE').length;
+  const measurableUnverifiable = scoreableRows.filter((row) => row.state === 'UNVERIFIABLE').length;
+  const categoryCounts: Record<LspEntryCategory, number> = {
+    'language-server': 0,
+    'compiler-cli': 0,
+    'linter-cli': 0,
+    'sdk-no-lsp-server': 0,
+    unclassified: 0,
+  };
+  for (const row of results) categoryCounts[row.category] += 1;
+
+  if (declaredNonLanguageServers > 0) {
+    const demoted = results
+      .filter((row) => !isScoreableCategory(row.category))
+      .map((row) => `${row.id}=${row.category}`)
+      .join(', ');
+    notes.push(
+      `${declaredNonLanguageServers} of ${results.length} declared \`lsp\` entries are NOT language servers (${demoted}). ` +
+        'They remain declared, probed and listed in servers[] with their real state and reason; they are excluded only from the ' +
+        `reachability DENOMINATOR, which is therefore ${declaredLanguageServers}, not ${results.length}. ` +
+        'A compiler CLI, a linter CLI and a bare SDK cannot answer an LSP handshake, so charging them against servers that do is a ' +
+        'miscategorisation of the inventory, not a measurement of health.',
+    );
+  }
+  const unclassifiedRows = results.filter((row) => row.category === 'unclassified');
+  if (unclassifiedRows.length > 0) {
+    notes.push(
+      `${unclassifiedRows.length} declared entr${unclassifiedRows.length === 1 ? 'y has' : 'ies have'} no recognised ` +
+        '`category` in the manifest. They are reported `unclassified`, counted in the declared inventory, and excluded from the ' +
+        'reachability denominator. An entry nobody classified cannot be credited.',
+    );
+  }
   if (unverifiable > 0) {
     notes.push(
       `${unverifiable} of ${results.length} declared servers are UNVERIFIABLE: a live LSP handshake could not be ` +
@@ -1742,6 +2006,13 @@ export async function runLspProbes(options: RunProbesOptions): Promise<LspProbeR
   return {
     summary: {
       total: results.length,
+      declaredTotal: results.length,
+      measurableTotal: declaredLanguageServers,
+      measurableOnline,
+      measurableOffline,
+      measurableUnverifiable,
+      nonLanguageServerTotal: declaredNonLanguageServers,
+      categoryCounts,
       online,
       offline,
       unverifiable,
@@ -1749,9 +2020,15 @@ export async function runLspProbes(options: RunProbesOptions): Promise<LspProbeR
     },
     denominator: {
       declaredInManifest: declared.length,
+      declaredLanguageServers,
+      declaredNonLanguageServers,
       declaredEntryDirectoryExists: entryExistsCount,
       languageServerLauncherResolved: launcherResolved,
       handshakeCompleted,
+      scoreDenominator:
+        `Divide measurableOnline (${measurableOnline}) by measurableTotal (${declaredLanguageServers}). ` +
+        `Do NOT divide by declaredTotal (${results.length}): ${declaredNonLanguageServers} of those entries are declared ` +
+        'toolchains that are not LSP endpoints.',
     },
     servers: results,
     generatedAt: new Date().toISOString(),
@@ -1815,6 +2092,12 @@ export function toProberReasonCode(reason: LspFailureReason): string {
 export interface ProberLspRow {
   readonly id: string;
   readonly state: LspProbeState;
+  /** Passed through so a consumer never has to re-derive the classification. */
+  readonly category: LspEntryCategory;
+  /** Whether this row belongs in the reachability denominator. */
+  readonly scoreable: boolean;
+  /** Operator-readable reason this entry is excluded. An exclusion nobody can read is indistinguishable from a quiet score adjustment. */
+  readonly categoryJustification?: string;
   readonly probeMethod: typeof PROBE_METHOD_LSP_CONTENT_LENGTH;
   readonly lastProbedAt: string;
   readonly durationMs: number;
@@ -1850,9 +2133,19 @@ export interface ProberLspReport {
     readonly unverifiable: number;
   };
   readonly servers: readonly ProberLspRow[];
-  /** This module's own richer accounting, preserved for the console. */
+  /**
+   * The corrected accounting, published ALONGSIDE `summary` rather than instead
+   * of it. `summary.total` keeps its original meaning (every declared row) so
+   * nothing that already reads it changes behaviour or loses an entry;
+   * `measurableTotal` is the denominator reachability must actually use.
+   */
   readonly measurable: number;
   readonly denominator: LspProbeReport['denominator'];
+  readonly measurableTotal: number;
+  readonly declaredTotal: number;
+  readonly measurableOnline: number;
+  readonly nonLanguageServerTotal: number;
+  readonly categoryCounts: Readonly<Record<LspEntryCategory, number>>;
   readonly notes: readonly string[];
 }
 
@@ -1886,6 +2179,11 @@ export function toProberLspReport(report: LspProbeReport, meta: ProberLspAdapter
     servers: report.servers.map((server) => ({
       id: server.id,
       state: server.state,
+      category: server.category,
+      scoreable: server.scoreable,
+      // An exclusion an operator cannot read is indistinguishable from a quiet
+      // score adjustment, so the reason travels with the row.
+      categoryJustification: server.categoryJustification,
       probeMethod: PROBE_METHOD_LSP_CONTENT_LENGTH,
       lastProbedAt: server.lastProbedAt,
       durationMs: server.durationMs,
@@ -1903,6 +2201,11 @@ export function toProberLspReport(report: LspProbeReport, meta: ProberLspAdapter
     })),
     measurable: report.summary.measurable,
     denominator: report.denominator,
+    measurableTotal: report.summary.measurableTotal,
+    declaredTotal: report.summary.declaredTotal,
+    measurableOnline: report.summary.measurableOnline,
+    nonLanguageServerTotal: report.summary.nonLanguageServerTotal,
+    categoryCounts: report.summary.categoryCounts,
     notes: report.notes,
   };
 }
@@ -2153,7 +2456,15 @@ export async function main(argv: readonly string[]): Promise<number> {
     process.stderr.write(`[lsp-prober] FATAL ${detail}\n`);
     process.stdout.write(
       `${JSON.stringify({
-        summary: { total: 0, online: 0, offline: 0, unverifiable: 0, measurable: 0 },
+        summary: {
+          total: 0, online: 0, offline: 0, unverifiable: 0, measurable: 0,
+          declaredTotal: 0, measurableTotal: 0, measurableOnline: 0,
+          measurableOffline: 0, measurableUnverifiable: 0, nonLanguageServerTotal: 0,
+          categoryCounts: {
+            'language-server': 0, 'compiler-cli': 0, 'linter-cli': 0,
+            'sdk-no-lsp-server': 0, unclassified: 0,
+          },
+        },
         servers: [],
         generatedAt: new Date().toISOString(),
         probeMethod: PROBE_METHOD_LSP_CONTENT_LENGTH,

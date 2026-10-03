@@ -8,8 +8,24 @@
  */
 
 import nodeCrypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { sovereignAgentMemoryInstance } from './agentMemoryEngine';
 import { sovereignKernelInstance } from '../os/kernelEngine';
+import {
+  verifyChainAgainstAnchorOnDisk,
+  type AnchorVerificationResult
+} from './auditChainAnchor';
+
+/* ── PERSISTENT LEDGER PATH ─────────────────────────────────────────────────
+ * Default: <project-root>/data/audit-ledger.jsonl
+ * Override with env SOVEREIGN_LEDGER_PATH for alternative mount points.
+ * The `data/` directory is created on first write if absent.
+ * The file format is newline-delimited JSON — one SovereignChainEntry per line.
+ * ─────────────────────────────────────────────────────────────────────────── */
+export const LEDGER_FILE_PATH = process.env.SOVEREIGN_LEDGER_PATH
+  ?? path.join(process.cwd(), 'data', 'audit-ledger.jsonl');
+
 
 export interface McpJsonRpcRequest {
   jsonrpc: '2.0';
@@ -95,6 +111,29 @@ export interface McpPromptDefinition {
  *       `crypto.timingSafeEqual` over SHA-256 digests, with a length guard;
  *   (d) if the ledger holds no entries, the result is an explicit
  *       UNVERIFIED_* negative. An empty chain is never reported as intact.
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * TRUST BOUNDARY — added by CHAIN-ARCHITECT (the limit of (a)…(d))
+ * ────────────────────────────────────────────────────────────────────────────
+ * (a)…(d) above are all LOCAL: they recompute from data held in the same trust
+ * boundary as the verifier. In this deployment the ledger reaches the runtime
+ * container solely via the `data/` bind mount, which is writable by the uid-1000
+ * process doing the verifying. So recomputation catches corruption and naive
+ * edits, but an attacker with code execution in the container can rewrite the
+ * entries AND their hashes consistently and still pass.
+ *
+ * `SEAL_INTACT_VERIFIED` is therefore gated on a FOURTH condition that none of
+ * (a)…(d) can supply: a detached signature over the exact chain on disk,
+ * verified against a public key pinned OUTSIDE the container. That check lives
+ * in `auditChainAnchor.ts`, which classifies an anchor by what it is actually
+ * worth — an unsigned co-located anchor is reported as `LOCAL_UNSIGNED_ASSERTION`
+ * and earns NOTHING, because calling that "INTACT" would be the original lie
+ * wearing a different hat.
+ *
+ * No key is provisioned, so today the anchor resolves to `NO_ANCHOR`, the status
+ * is `UNVERIFIED_ANCHOR_ABSENT`, `ok` is false, and the 30 health points stay at
+ * zero. That is the correct measurement for this deployment, not a bug to route
+ * around.
  * ========================================================================= */
 
 /** The Chain Key ID this process is configured with. */
@@ -140,13 +179,59 @@ export interface SovereignChainEntry {
   evidenceBearing: boolean;
 }
 
-/** Append-only, process-local audit ledger of chain-verification records. */
-const sovereignAuditLedger: SovereignChainEntry[] = [];
+/* ── PERSISTENT LEDGER — LOAD FROM DISK ─────────────────────────────────────
+ * Reads the JSONL ledger file at startup and validates that:
+ *   1. Every line is parseable JSON with the required fields.
+ *   2. Every entry's stored `hash` matches what `computeChainEntryHash` derives
+ *      from its own content (no stored digest is trusted).
+ *   3. Sequential `seq` values are contiguous starting from 0.
+ * Entries that fail validation are dropped and a warning is emitted so that a
+ * corrupted tail does not silence an otherwise intact ledger.
+ * An empty or absent file is a valid starting state (genesis).
+ * ─────────────────────────────────────────────────────────────────────────── */
+function loadLedgerFromDisk(): SovereignChainEntry[] {
+  const loaded: SovereignChainEntry[] = [];
+  if (!fs.existsSync(LEDGER_FILE_PATH)) {
+    return loaded; // genesis — no prior history
+  }
+  const raw = fs.readFileSync(LEDGER_FILE_PATH, 'utf8');
+  const lines = raw.split('\n').filter(l => l.trim().length > 0);
+  for (const line of lines) {
+    let entry: SovereignChainEntry;
+    try {
+      entry = JSON.parse(line) as SovereignChainEntry;
+    } catch {
+      console.warn(`[LEDGER] Skipping unparseable line (seq=${loaded.length}): ${line.slice(0, 80)}`);
+      continue;
+    }
+    // Re-derive the hash; reject if tampered
+    const { hash, ...rest } = entry;
+    const recomputed = computeChainEntryHash(rest);
+    if (recomputed !== hash) {
+      console.warn(`[LEDGER] Digest mismatch on seq=${entry.seq} — dropping corrupted entry.`);
+      continue;
+    }
+    // Validate seq contiguity
+    if (entry.seq !== loaded.length) {
+      console.warn(`[LEDGER] seq gap: expected ${loaded.length}, got ${entry.seq} — stopping load.`);
+      break;
+    }
+    loaded.push(entry);
+  }
+  if (loaded.length > 0) {
+    console.log(`[LEDGER] Loaded ${loaded.length} verified entries from ${LEDGER_FILE_PATH}`);
+  }
+  return loaded;
+}
+
+/** Append-only audit ledger. Initialised from disk at module load time. */
+const sovereignAuditLedger: SovereignChainEntry[] = loadLedgerFromDisk();
 
 export type ChainCheckId =
   | 'CHAIN_KEY_BINDING'
   | 'SEALED_EVIDENCE_PRESENT'
   | 'GENESIS_ANCHOR_LINKAGE'
+  | 'EXTERNAL_ANCHOR_ATTESTATION'
   | 'ENTRY_DIGEST_RECOMPUTATION'
   | 'ENTRY_LINKAGE';
 
@@ -169,6 +254,17 @@ export interface ChainVerificationReport {
   algorithm: typeof CHAIN_HASH_ALGORITHM;
   reason: string | null;
   checks: ChainCheckResult[];
+  /**
+   * The external-attestation dimension, reported separately from `ok`/`verified`
+   * so a reader can see WHAT KIND of anchor was involved rather than inferring
+   * it from a bare pass/fail. `cryptographicallyAnchored` is the only field in
+   * this report that may be quoted as "an external party attested to this
+   * chain"; everything else is local recomputation.
+   *
+   * `null` ONLY on the two pre-ledger early returns (wrong Chain Key ID, empty
+   * ledger), where no anchor evaluation was attempted at all.
+   */
+  anchor: AnchorVerificationResult | null;
   ledger: {
     entries: number;
     verifiedEntries: number;
@@ -228,6 +324,35 @@ export function appendChainRecord(event: string, chainKeyId: string, evidenceBea
     evidenceBearing
   };
   const entry: SovereignChainEntry = { ...base, hash: computeChainEntryHash(base) };
+
+  // ── PERSIST FIRST, THEN ADOPT ─────────────────────────────────────────────
+  // ORDER IS LOAD-BEARING. The entry is written to disk BEFORE it enters the
+  // in-memory ledger. Writing after the push produced a silent failure: when the
+  // archive directory was unwritable the entry still hashed, still returned, and
+  // still reported success — a hash chain that attested to entries it had not
+  // actually recorded. That is the same defect class as treating fs.existsSync as
+  // reachability: a claim of durability with no evidence of durability.
+  //
+  // If persistence fails the entry is NOT adopted. The caller receives a thrown
+  // error, the ledger is left exactly as it was, and the absence of the record is
+  // visible instead of being laundered into a success response.
+  const dir = path.dirname(LEDGER_FILE_PATH);
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(LEDGER_FILE_PATH, JSON.stringify(entry) + '\n', 'utf8');
+  } catch (err) {
+    const detail = (err as Error).message;
+    console.error(
+      `[LEDGER] REFUSING TO ADOPT seq=${entry.seq}: persistence to ${LEDGER_FILE_PATH} failed (${detail}). ` +
+      `The entry was NOT added to the in-memory ledger, so no caller can be told it was recorded. ` +
+      `Fix the archive path or its permissions before retrying.`
+    );
+    throw new Error(
+      `AUDIT_LEDGER_PERSIST_FAILED: could not append seq=${entry.seq} to ${LEDGER_FILE_PATH} (${detail}). ` +
+      `The record was deliberately NOT adopted — reporting it as recorded would be a false claim.`
+    );
+  }
+
   sovereignAuditLedger.push(entry);
   return entry;
 }
@@ -264,6 +389,7 @@ export function verifySovereignChain(chainKeyId: string): ChainVerificationRepor
       algorithm: CHAIN_HASH_ALGORITHM,
       reason: 'The supplied Chain Key ID is not the configured Chain Key ID for this process.',
       checks,
+      anchor: null,
       ledger: {
         entries: sovereignAuditLedger.length,
         verifiedEntries: 0,
@@ -293,6 +419,7 @@ export function verifySovereignChain(chainKeyId: string): ChainVerificationRepor
       reason:
         'No cryptographic ledger data exists to verify. This repository stores no forward-linked hash chain (zero `prevHash` fields anywhere in the tree), and server.ts:171-175 holds `auditChainStatus` as a hardcoded literal rather than a recomputed result. Reporting INTACT here would be fabrication, so an explicit UNVERIFIED negative is returned instead.',
       checks,
+      anchor: null,
       ledger: {
         entries: 0,
         verifiedEntries: 0,
@@ -343,25 +470,105 @@ export function verifySovereignChain(chainKeyId: string): ChainVerificationRepor
   });
 
   const verifiedEntries = sovereignAuditLedger.length - digestFailures;
-  const noEvidence = evidenceEntries.length === 0;
-  const intact = !noEvidence && digestFailures === 0 && linkageFailures === 0;
 
-  const noEvidenceReason =
-    'Chain arithmetic is internally consistent, but the ledger contains no evidence-bearing records: every entry is a verification stamp this module issued about itself. No independent producer (governance proposal, kernel audit commit, HITL decision) is wired into this ledger yet, so there is no audit history to attest to. Reporting INTACT would be a self-attested signature — returning UNVERIFIED instead.';
+  // ────────────────────────────────────────────────────────────────────────────
+  // CHECK 6: EXTERNAL ANCHOR ATTESTATION — the trust-boundary dimension
+  // ────────────────────────────────────────────────────────────────────────────
+  // Everything above this line is LOCAL RECOMPUTATION. It is genuine — digests
+  // are re-derived from content and linkages are re-walked — but it operates
+  // entirely inside one trust boundary. The ledger arrives in the runtime
+  // container ONLY through the `data/` bind mount (see the Dockerfile: the runner
+  // stage copies just `dist/`, `public/` and `package*.json`, and `.dockerignore`
+  // excludes the `.git` tree), and that mount is writable by the very uid-1000 process
+  // performing the verification. Anyone who can execute code in the container can
+  // therefore rewrite entries, hashes, and any co-located anchor consistently, and
+  // every check above would still pass.
+  //
+  // So a pass REQUIRES an anchor that somebody outside that reach signed. The
+  // anchor result is classified, not booleanised, because "the anchor file
+  // matched" and "a key the container cannot reach signed this chain" are
+  // completely different claims and must never be collapsed into one `true`.
+  const anchor = verifyChainAgainstAnchorOnDisk(
+    sovereignAuditLedger,
+    GENESIS_PREV_HASH,
+    SOVEREIGN_CHAIN_KEY_ID,
+    computeChainEntryHash as (entry: Omit<SovereignChainEntry, 'hash'>) => string
+  );
+  checks.push({
+    id: 'EXTERNAL_ANCHOR_ATTESTATION',
+    passed: anchor.cryptographicallyAnchored,
+    detail:
+      `anchor=${anchor.assurance}, verdict=${anchor.verdict}, trustBoundary=${anchor.trustBoundary}. ` +
+      anchor.detail
+  });
+
+  const noEvidence = evidenceEntries.length === 0;
+  const chainArithmeticFailed = digestFailures > 0 || linkageFailures > 0;
+  // The anchor is only "trustworthy" when it is authentic AND it matched. An
+  // unsigned local anchor that matches is explicitly NOT trustworthy evidence —
+  // see `LOCAL_UNSIGNED_ASSERTION` in auditChainAnchor.ts.
+  const anchorTrustworthy = anchor.cryptographicallyAnchored && anchor.verdict === 'MATCHED';
+
+  // ── VERDICT PRECEDENCE ─────────────────────────────────────────────────────
+  // Order matters. A broken chain outranks an anchor story, and a missing
+  // independent evidence producer outranks everything, because that is the
+  // condition that made the original tautology look like a pass.
+  let status: string;
+  let reason: string;
+
+  if (chainArithmeticFailed) {
+    status = 'TAMPERED_REJECTED';
+    reason = `${digestFailures} digest mismatch(es) and ${linkageFailures} broken link(s) detected by recomputation.`;
+  } else if (noEvidence) {
+    status = 'UNVERIFIED_NO_SEALED_EVIDENCE';
+    reason =
+      'Chain arithmetic is internally consistent, but the ledger contains no evidence-bearing records: every entry is a verification stamp this module issued about itself. No independent producer (governance proposal, kernel audit commit, HITL decision) is wired into this ledger yet, so there is no audit history to attest to. Reporting INTACT would be a self-attested signature — returning UNVERIFIED instead. ' +
+      `Anchor state for completeness: ${anchor.detail}`;
+  } else if (anchor.verdict === 'MISMATCH') {
+    // This is the one genuinely damning state: the seal is here, it is intact,
+    // and the chain no longer matches it. That is real evidence of a rewrite.
+    status = anchor.cryptographicallyAnchored ? 'TAMPERED_ANCHOR_MISMATCH' : 'UNVERIFIED_ANCHOR_MISMATCH';
+    reason =
+      `The seal describes a different chain than the one on disk. ${anchor.detail} ` +
+      'A MATCHED-equivalent result is impossible until the ledger is restored to the sealed state or re-sealed by an authority outside this container.';
+  } else if (anchor.assurance === 'ANCHOR_CORRUPT') {
+    status = 'UNVERIFIED_ANCHOR_CORRUPT';
+    reason = `An anchor document exists but cannot be trusted. ${anchor.detail}`;
+  } else if (anchor.assurance === 'SIGNATURE_UNPINNED_NO_TRUST_ROOT') {
+    status = 'UNVERIFIED_ANCHOR_UNPINNED';
+    reason = `An anchor exists and matches, but it cannot be attributed to a key. ${anchor.detail}`;
+  } else if (anchor.assurance === 'LOCAL_UNSIGNED_ASSERTION') {
+    status = 'UNVERIFIED_ANCHOR_UNSIGNED';
+    reason =
+      `An anchor exists and matches the recomputed chain, but it is an UNSIGNED file co-located with the ledger it covers. ${anchor.detail} ` +
+      'This is defence-in-depth against accidental corruption, NOT tamper-evidence. INTACT is withheld because a determined attacker with write access to this host can forge it.';
+  } else if (!anchorTrustworthy) {
+    // Defensive ordering: the pass branch below is gated on the explicit boolean,
+    // not on "none of the other branches matched". If a new assurance class is
+    // ever added it must clear this gate, it cannot fall through into a pass.
+    status = anchor.verdict === 'MATCHED' ? 'UNVERIFIED_ANCHOR_UNTRUSTED' : 'UNVERIFIED_ANCHOR_ABSENT';
+    reason = `No anchor outside this container's write reach has attested to the chain. ${anchor.detail}`;
+  } else {
+    // Reachable only when: independent evidence exists, every digest and link
+    // recomputes, and a detached signature from a key OUTSIDE the container's
+    // write reach verifies over the exact chain on disk. Every one of those is
+    // measured, none is assumed.
+    status = 'SEAL_INTACT_VERIFIED';
+    reason = null;
+  }
+
+  const intact = status === 'SEAL_INTACT_VERIFIED';
 
   return {
     ok: intact,
     verifiedChainKey: supplied,
-    status: intact ? 'SEAL_INTACT_VERIFIED' : (noEvidence ? 'UNVERIFIED_NO_SEALED_EVIDENCE' : 'TAMPERED_REJECTED'),
+    status,
     timestamp,
     verified: intact,
     algorithm: CHAIN_HASH_ALGORITHM,
-    reason: intact
-      ? null
-      : noEvidence
-        ? noEvidenceReason
-        : `${digestFailures} digest mismatch(es) and ${linkageFailures} broken link(s) detected by recomputation.`,
+    reason,
     checks,
+    anchor,
     ledger: {
       entries: sovereignAuditLedger.length,
       verifiedEntries,
@@ -688,13 +895,22 @@ export class SovereignMcpServer {
     // Chain Key ID via crypto.timingSafeEqual. When no ledger data exists the
     // result is an explicit UNVERIFIED_* negative — never a fabricated INTACT.
     //
+    // TRUST BOUNDARY (added): recomputation alone is not tamper-evidence. The
+    // ledger reaches the runtime container only through the `data/` bind mount,
+    // which the verifying process itself can write. A pass therefore additionally
+    // requires an external anchor whose detached signature verifies against a
+    // public key pinned outside the container — see `auditChainAnchor.ts`, whose
+    // header states the model in full. With no key provisioned this tool reports
+    // `UNVERIFIED_ANCHOR_ABSENT` and `ok:false`, which is the correct answer for
+    // this deployment rather than a defect to be worked around.
+    //
     // Every invocation is itself appended to the append-only ledger AFTER
     // verification completes, so the ledger grows from zero and each subsequent
     // verification has genuine evidence to verify.
     this.registerTool({
       name: 'sovereign_verify_chain',
       description:
-        'Verifies the SHA-256 forward-linked audit ledger by recomputing each entry digest and each prevHash linkage, and binds the Chain Key ID via constant-time comparison. Returns an explicit UNVERIFIED_* negative when no ledger data exists; it never reports INTACT without verified evidence.',
+        'Verifies the SHA-256 forward-linked audit ledger by recomputing each entry digest and each prevHash linkage, and binds the Chain Key ID via constant-time comparison. Reports the external-anchor state explicitly, distinguishing an unsigned local anchor (accidental-corruption detection only) from a signature verified against a pinned key outside the container (genuine tamper-evidence). Returns an explicit UNVERIFIED_* negative whenever no such attestation exists; it never reports INTACT without verified evidence.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -785,7 +1001,7 @@ export class SovereignMcpServer {
       uri: 'sovereign://audit/chain',
       name: 'Sovereign Audit Chain State',
       description:
-        'Live state of the real SHA-256 forward-linked audit ledger: entry count, recomputed digests, prevHash linkage and genesis anchor. Exposes the honest terminal verdict without asserting integrity that was never measured.',
+        'Live state of the real SHA-256 forward-linked audit ledger: entry count, recomputed digests, prevHash linkage, and the full external-anchor classification (assurance class, trust boundary, verdict). Exposes the honest terminal verdict without asserting integrity that was never measured.',
       mimeType: 'application/json',
       readHandler: async () => {
         const report = verifySovereignChain(SOVEREIGN_CHAIN_KEY_ID);
@@ -796,6 +1012,7 @@ export class SovereignMcpServer {
           algorithm: report.algorithm,
           reason: report.reason,
           checks: report.checks,
+          anchor: report.anchor,
           ledger: report.ledger,
           readAt: new Date().toISOString()
         }, null, 2);

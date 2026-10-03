@@ -344,11 +344,82 @@ export interface McpServerInfo {
   lastProbedAt: string;
 }
 
+/**
+ * What an `lsp` inventory entry ACTUALLY IS, per the manifest's own `category`
+ * field. A genuine language server is the only category permitted in the LSP
+ * reachability DENOMINATOR.
+ *
+ * The manifest demotes three of its six `lsp` entries on the strength of its own
+ * text, quoted in `categoryJustification`: `typescript` and `eslint` ship a
+ * compiler CLI / linter CLI ("NOT a language server", "speaks its own protocol
+ * and is not an LSP server"), and `dotnet` is a bare SDK ("the SDK is a
+ * toolchain, not an LSP endpoint").
+ *
+ * This is a CORRECTION of a miscategorisation. Nothing is deleted, nothing is
+ * hidden, and no entry is promoted to healthy. `unclassified` is the deliberate
+ * fallback for an entry with no category: unmeasured must never earn credit, so
+ * the unknown case lowers a score and never raises one.
+ */
+export type LspEntryCategory =
+  | 'language-server'
+  | 'compiler-cli'
+  | 'linter-cli'
+  | 'sdk-no-lsp-server'
+  | 'unclassified';
+
+/** Every category understood by this registry, in manifest order. */
+export const LSP_ENTRY_CATEGORIES: readonly LspEntryCategory[] = [
+  'language-server',
+  'compiler-cli',
+  'linter-cli',
+  'sdk-no-lsp-server',
+  'unclassified',
+];
+
+/** The ONLY categories permitted in the reachability denominator. */
+export const LSP_SCORE_DENOMINATOR_CATEGORIES: readonly LspEntryCategory[] = ['language-server'];
+
+/** True when an entry of this category is entitled to sit in the denominator. */
+export function isScoreableCategory(category: LspEntryCategory): boolean {
+  return LSP_SCORE_DENOMINATOR_CATEGORIES.includes(category);
+}
+
+/** Read a manifest `category`, refusing to guess. Unknown/absent -> unclassified. */
+export function parseLspEntryCategory(value: unknown): LspEntryCategory {
+  return typeof value === 'string' && (LSP_ENTRY_CATEGORIES as readonly string[]).includes(value)
+    ? (value as LspEntryCategory)
+    : 'unclassified';
+}
+
+/**
+ * Tally the LSP inventory by declared category.
+ *
+ * Every category key is always present with an explicit count, including the
+ * zeroes. A missing key would let a consumer conclude "no compiler-CLI entries"
+ * from an absence, which is exactly the kind of negative-by-silence this file
+ * exists to forbid.
+ */
+function lspCategoryCounts(servers: readonly LspServerInfo[]): Record<LspEntryCategory, number> {
+  const counts = {
+    'language-server': 0,
+    'compiler-cli': 0,
+    'linter-cli': 0,
+    'sdk-no-lsp-server': 0,
+    unclassified: 0
+  } as Record<LspEntryCategory, number>;
+  for (const server of servers) counts[server.category] += 1;
+  return counts;
+}
+
 export interface LspServerInfo {
   id: string;
   name: string;
   version: string;
   type: 'lsp';
+  /** What this entry actually is. Published per row so it is never inferred. */
+  category: LspEntryCategory;
+  /** True only for `category: language-server`; the denominator is built from this. */
+  scoreable: boolean;
   entry?: string;
   fullPath?: string;
   source?: string;
@@ -449,6 +520,22 @@ export interface ServersCenterOverview {
     offlineCount: number;
     unverifiedCount: number;
     servers: LspServerInfo[];
+    /**
+     * BOTH populations, published side by side. `declaredTotal` is every
+     * declared `lsp` entry including the demoted toolchains; `measurableTotal`
+     * counts only `category: language-server` entries and is the denominator a
+     * reachability ratio must use. Publishing only one of the two would be a
+     * partial picture presented as a whole.
+     */
+    declaredTotal: number;
+    measurableTotal: number;
+    measurableOnline: number;
+    nonLanguageServerTotal: number;
+    categoryCounts: Record<LspEntryCategory, number>;
+    /** Plain-language statement of which number a consumer must divide by. */
+    scoreDenominator: string;
+    /** Demoted entries by id, so nothing is silently dropped from the UI. */
+    nonLanguageServers: { id: string; category: LspEntryCategory }[];
   };
   chainKey: string;
   lastSync: string;
@@ -496,16 +583,28 @@ const MCP_METADATA: Record<string, { label: string; description: string; default
   }
 };
 
+// Labels and descriptions only — metadata, never a reachability claim.
+//
+// CORRECTION: the `typescript` and `eslint` labels below previously read
+// "Language Server" and "Diagnostic Server". The manifest states in its own
+// `note` that neither directory holds a language server — one holds the
+// TypeScript compiler package, the other the ESLint package, whose `.bin`
+// entries are a linter CLI speaking its own protocol. Labelling a compiler CLI
+// as a Language Server in the UI is the same miscategorisation as counting it
+// in the reachability denominator, and is corrected on the same evidence. The
+// inventory entry is preserved; only the false claim in its label is removed.
 const LSP_METADATA: Record<string, { label: string; language: string; description: string }> = {
   'typescript': {
-    label: 'TypeScript / JavaScript Language Server',
+    label: 'TypeScript Compiler Toolchain (not a language server)',
     language: 'TypeScript / JavaScript',
-    description: 'Real-time type checking, refactoring, hover diagnostics, and symbol indexing via TSServer'
+    description:
+      'npm typescript package. Ships tsc (compiler CLI) and tsserver (compiler daemon); neither speaks LSP. No typescript-language-server is installed. Classified compiler-cli.'
   },
   'eslint': {
-    label: 'ESLint Diagnostic Server',
+    label: 'ESLint Linter Toolchain (not a language server)',
     language: 'JavaScript / TypeScript / JSX',
-    description: 'Static code analysis, security rule enforcement, and stylistic linting diagnostics'
+    description:
+      'npm eslint package. Ships the eslint CLI, which speaks its own protocol and is not an LSP server. No eslint-language-server is installed. Classified linter-cli.'
   },
   'bash': {
     label: 'Bash Language Server',
@@ -523,9 +622,16 @@ const LSP_METADATA: Record<string, { label: string; language: string; descriptio
     description: 'High-speed type inference, static analysis, and language features for Python 3'
   },
   'dotnet': {
-    label: 'DotNet C# Language Server',
+    // CORRECTION: previously labelled "DotNet C# Language Server" with a
+    // Roslyn description. The manifest records that the .NET SDK is installed
+    // but that no C# language server was found — neither omnisharp nor
+    // csharp-ls is on PATH, and no Servers Center asset exists. There is
+    // nothing to serve LSP; naming a Roslyn language service that is not
+    // installed here asserted a capability with no asset behind it.
+    label: '.NET SDK only (no C# language server installed)',
     language: 'C# / .NET SDK',
-    description: 'Roslyn-based language services for C# enterprise backend microservices'
+    description:
+      'System .NET SDK is installed; no C# LSP endpoint exists. omnisharp and csharp-ls are both absent and there is no Servers Center asset. Classified sdk-no-lsp-server.'
   }
 };
 
@@ -664,7 +770,25 @@ export class ServersCenterRegistry {
         readyCount: lspServers.filter(s => s.isHealthy).length,
         offlineCount: lspServers.filter(s => s.status === 'OFFLINE').length,
         unverifiedCount: lspServers.filter(s => s.status === 'UNVERIFIABLE').length,
-        servers: lspServers
+        servers: lspServers,
+        // ── Both populations, published together ──────────────────────────────
+        // `declaredTotal` is every declared entry and is what `servers[]`
+        // contains — nothing is removed from the UI. `measurableTotal` counts
+        // only genuine language servers and is the denominator reachability must
+        // use. A ratio over `declaredTotal` charges a compiler CLI, a linter CLI
+        // and a bare SDK against the servers that actually speak LSP.
+        declaredTotal: lspServers.length,
+        measurableTotal: lspServers.filter(s => isScoreableCategory(s.category)).length,
+        measurableOnline: lspServers.filter(s => isScoreableCategory(s.category) && s.status === 'ONLINE').length,
+        nonLanguageServerTotal: lspServers.filter(s => !isScoreableCategory(s.category)).length,
+        categoryCounts: lspCategoryCounts(lspServers),
+        scoreDenominator:
+          `Divide the ONLINE count of language servers by measurableTotal (${lspServers.filter(s => isScoreableCategory(s.category)).length}). ` +
+          `Do NOT divide by declaredTotal (${lspServers.length}): ` +
+          `${lspServers.filter(s => !isScoreableCategory(s.category)).length} of those entries are declared toolchains that are not LSP endpoints.`,
+        nonLanguageServers: lspServers
+          .filter(s => !isScoreableCategory(s.category))
+          .map(s => ({ id: s.id, category: s.category }))
       },
       chainKey: '360ea36c28e66d9d',
       lastSync: probedAt
@@ -772,8 +896,16 @@ export class ServersCenterRegistry {
 
     return keys.map(key => {
       const entryCfg = lspEntries[key] || {};
+
+      // The manifest's explicit classification. Absent or unrecognised resolves
+      // to `unclassified`, which is EXCLUDED from the denominator. Direction is
+      // deliberate: an unclassified entry can lower a score, never raise one.
+      const category = parseLspEntryCategory(entryCfg.category);
+
       const meta = LSP_METADATA[key] || {
-        label: `${key.toUpperCase()} LSP`,
+        // Never say "Language Server" about an entry whose own manifest category
+        // denies it. An unclassified entry gets a label that claims nothing.
+        label: category === 'language-server' ? `${key.toUpperCase()} Language Server` : `${key.toUpperCase()} (uncategorised LSP inventory entry)`,
         language: key,
         description: `Language Server Protocol service for ${key}`
       };
@@ -807,6 +939,8 @@ export class ServersCenterRegistry {
         name: meta.label,
         version: declaredVersion.length > 0 ? declaredVersion : 'unreported',
         type: 'lsp',
+        category,
+        scoreable: isScoreableCategory(category),
         entry: relEntry,
         fullPath,
         source: entryCfg.source,

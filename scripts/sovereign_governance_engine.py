@@ -31,7 +31,18 @@ if hasattr(sys.stderr, "reconfigure"):
 
 # Constant Configuration
 DEFAULT_BASE_URL: Final[str] = "http://localhost:3000"
-TIMEOUT_SECONDS: Final[float] = 6.0
+# TIMEOUT RAISED (Chain Key 360ea36c28e66d9d): the old value was 6.0s, measured
+# against endpoints that had not yet learned to do real work. `/api/agents/framework`
+# now drives a REAL stdio JSON-RPC handshake against every MCP server and a real
+# Content-Length-framed LSP handshake against every language server, and it answers
+# in ~20s on this host. A 6s budget did not merely report "slow", it killed the whole
+# process: see the unhandled-`TimeoutError` note in `_async_http_call` below.
+#
+# This is a fix to the HARNESS, not a relaxation of a measurement. No assertion was
+# weakened; a genuinely-slow-but-honest probe must be allowed to finish and be judged
+# on what it actually says. A probe that cannot finish is still reported as
+# UNREACHABLE and still fails the run.
+TIMEOUT_SECONDS: Final[float] = 45.0
 CHAIN_KEY_ID: Final[str] = "360ea36c28e66d9d"
 
 
@@ -98,6 +109,25 @@ class SovereignClient:
                 return e.code, parsed
             except URLError as e:
                 return 503, {"error": f"Connection Refused or Unreachable: {e.reason}"}
+            except (TimeoutError, OSError) as e:
+                # INCORRECT-FAILURE FIX (Chain Key 360ea36c28e66d9d).
+                # FORENSIC FINDING: `TimeoutError` is a subclass of `OSError`, NOT of
+                # `URLError`. `urllib` raises the bare socket timeout while reading the
+                # status line, so it escaped both handlers above and propagated out of
+                # `asyncio.gather` — terminating the whole engine with a traceback
+                # before a single verdict was printed. Measured effect: the governance
+                # verifier crashed with exit 1 while every subsystem was in fact
+                # reachable, purely because one legitimate endpoint became slower when it
+                # started doing honest work instead of returning a fabricated count.
+                #
+                # A transport failure is a MEASUREMENT (this subsystem is UNREACHABLE),
+                # not a fatal error of the instrument. It is now attributed to the
+                # subsystem that hit it, and `main()` still exits 1 because
+                # `is_success` requires zero unhealthy subsystems.
+                return 504, {
+                    "error": f"Transport timeout or OS-level failure after {TIMEOUT_SECONDS}s: {type(e).__name__}: {e}",
+                    "reason": "NO_VERDICT_ESTABLISHED",
+                }
 
         return await asyncio.to_thread(_blocking_call)
 
@@ -141,33 +171,86 @@ class SovereignClient:
         )
 
     async def probe_audit_chain(self) -> SubsystemReport:
+        """Probe the audit ledger, distinguishing 'cannot prove' from 'proven broken'.
+
+        HONESTY FIX (Chain Key 360ea36c28e66d9d). This probe previously had exactly
+        two ways to fail: `INTACT` -> healthy, everything else -> `TAMPERED_OR_CORRUPT`.
+        That conflated two states that mean opposite things to an operator:
+
+          * the ledger is internally consistent but no anchor outside the container's
+            write reach has attested to it, so integrity is UNPROVABLE; and
+          * a digest/linkage actually failed and the chain is demonstrably BROKEN.
+
+        Calling the first case "TAMPERED_OR_CORRUPT" is a false accusation: it asserts
+        tampering that the payload does not report, and it trains the reader to
+        discount the alarm. It also invents an unbroken verdict ("corrupt") that no
+        observation supports — the precise failure mode this programme exists to remove.
+
+        The endpoint now publishes `status` plus an explanatory `reason`, and sets
+        `brokenAt` to a sequence number only when a link or digest actually failed. So
+        the honest discriminator is `brokenAt`, not the absence of a positive verdict.
+        """
         status, data = await self._async_http_call("/api/hitl/audit/verify")
         chain_status = data.get("status")
         entry_count: int = data.get("entryCount", -1)
         broken_at = data.get("brokenAt")
-        match (status, chain_status):
-            case (200, "INTACT"):
-                verified = data.get("verifiedEntries", 0)
+        verified_entries: int = data.get("verifiedEntries", 0)
+        reason: str = str(data.get("reason") or "").strip()
+
+        match (status, chain_status, broken_at):
+            case (200, "INTACT", None):
                 return SubsystemReport(
                     name="Sovereign Audit Chain",
                     status="VERIFIED_INTACT",
-                    details=f"SHA-256 ledger tamper-proof | {verified} entries verified",
+                    details=f"SHA-256 ledger tamper-proof | {verified_entries} entries verified",
                     healthy=True,
                 )
-            case (200, "UNVERIFIED") if entry_count == 0 and broken_at is None:
-                # Empty ledger — genesis state, but absence of evidence ≠ health.
-                # Cannot verify integrity of what does not exist yet.
+            case (200, _, _) if broken_at is not None:
+                # A real integrity failure. This is the only branch that may claim
+                # tampering, and it may claim it only because `brokenAt` was set.
+                return SubsystemReport(
+                    name="Sovereign Audit Chain",
+                    status="TAMPERED_BROKEN_LINK",
+                    details=(
+                        f"Recomputation FAILED at entry {broken_at} | "
+                        f"{verified_entries}/{entry_count} entries recomputed"
+                    ),
+                    healthy=False,
+                )
+            case (200, "UNVERIFIED", None) if entry_count == 0:
                 return SubsystemReport(
                     name="Sovereign Audit Chain",
                     status="EMPTY_LEDGER_UNVERIFIABLE",
-                    details="Ledger in genesis state (0 entries, brokenAt=null) — cannot verify; awaiting first sealed entry",
+                    details=(
+                        "Ledger in genesis state (0 entries, brokenAt=null) — nothing to "
+                        "verify; awaiting first sealed entry"
+                    ),
+                    healthy=False,
+                )
+            case (200, _, None):
+                # Arithmetically consistent, but UNPROVABLE: no external attestation.
+                # Unhealthy (absence of evidence is not health) yet NOT tampered.
+                return SubsystemReport(
+                    name="Sovereign Audit Chain",
+                    status="UNVERIFIED_NO_ANCHOR",
+                    details=(
+                        f"{verified_entries}/{entry_count} entries recomputed, brokenAt=null, "
+                        f"but no anchor outside this container attests to the chain — "
+                        f"integrity UNPROVEN (not tampered). {reason}"
+                    ),
                     healthy=False,
                 )
             case _:
+                # Reached only when the endpoint itself failed. Report the transport
+                # truth and withhold any claim about the ledger's contents.
                 return SubsystemReport(
                     name="Sovereign Audit Chain",
-                    status="TAMPERED_OR_CORRUPT",
-                    details=f"Chain status: {chain_status} | brokenAt: {broken_at} | entries: {entry_count}",
+                    status="UNREACHABLE_NO_VERDICT",
+                    details=(
+                        f"HTTP {status} from /api/hitl/audit/verify — "
+                        f"no verdict established, chain state unknown. "
+                        f"{data.get('error', '')}"
+                    ),
                     healthy=False,
                 )
 
@@ -185,22 +268,63 @@ class SovereignClient:
         mcp = data.get("mcp", {})
         online: int = mcp.get("online", 0)
         total: int = mcp.get("total", 0)
+        unverified: int = mcp.get("unverifiedCount", 0)
         source: str = mcp.get("measurementSource", "UNKNOWN")
+        reachability_verified: bool = bool(mcp.get("reachabilityVerified", False))
         servers_list = mcp.get("servers", [])
         server_ids = [s.get("id", "?") for s in servers_list if isinstance(s, dict)]
-        match (online, total):
-            case (n, t) if n > 0 and n == t:
+
+        # HONESTY FIX (Chain Key 360ea36c28e66d9d).
+        # FORENSIC FINDING: the previous `case (0, _)` branch printed
+        #     status="OFFLINE", details="0/N ONLINE"
+        # for ANY zero count. Two very different states collapse into it:
+        #   (a) total == 0 because the inventory could not be enumerated (discovery
+        #       failed, assets absent) — we did not look, so we know nothing; and
+        #   (b) total > 0 and every discovered server was probed and found offline —
+        #       a measured failure of known servers.
+        # (a) is reported as OFFLINE, which asserts a fact about the servers that no
+        # observation supports, and simultaneously hides the real problem (discovery
+        # failed) behind a server-health verdict. The endpoint publishes exactly the
+        # fields needed to tell them apart, so the split is now made on evidence.
+        match (online, total, unverified, reachability_verified):
+            case (0, 0, _, _):
+                return SubsystemReport(
+                    name="Model Context Protocol (MCP)",
+                    status="UNVERIFIABLE_NO_INVENTORY",
+                    details=(
+                        "0/0 ONLINE — no inventory could be enumerated, so no MCP "
+                        f"server was probed and none can be called offline. source: {source}"
+                    ),
+                    healthy=False,
+                )
+            case (n, t, 0, True) if n > 0 and n == t:
                 return SubsystemReport(
                     name="Model Context Protocol (MCP)",
                     status="ACTIVE",
-                    details=f"{online}/{total} ONLINE | source: {source} | ids: {server_ids}",
+                    details=(
+                        f"{online}/{total} ONLINE over a verified real transport | "
+                        f"source: {source} | ids: {server_ids}"
+                    ),
                     healthy=True,
                 )
-            case (0, _):
+            case (0, t, _, _) if t > 0:
+                # Measured: every inventoried server was probed and none answered.
                 return SubsystemReport(
                     name="Model Context Protocol (MCP)",
-                    status="OFFLINE",
-                    details=f"0/{total} ONLINE | source: {source}",
+                    status="MEASURED_OFFLINE",
+                    details=f"0/{total} ONLINE | source: {source} | every probed server failed",
+                    healthy=False,
+                )
+            case (n, t, u, _) if u > 0:
+                # A real measured OFFLINE must stay separable from an UNVERIFIABLE that
+                # only means "we could not look". Both are present.
+                return SubsystemReport(
+                    name="Model Context Protocol (MCP)",
+                    status="PARTIAL_WITH_UNVERIFIED",
+                    details=(
+                        f"{online}/{total} ONLINE | {u} UNVERIFIABLE (absence of evidence, "
+                        f"not evidence of absence) | source: {source}"
+                    ),
                     healthy=False,
                 )
             case _:

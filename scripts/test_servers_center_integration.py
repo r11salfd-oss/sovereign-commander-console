@@ -211,7 +211,9 @@ const result = {{
   lspCount,
   chainKey: overview.chainKey,
   mcpIds: overview.mcpSummary.servers.map(s => s.id),
-  lspIds: overview.lspSummary.servers.map(s => s.id)
+  lspIds: overview.lspSummary.servers.map(s => s.id),
+  lspCategories: Object.fromEntries(overview.lspSummary.servers.map(s => [s.id, s.category])),
+  lspScoreableCount: overview.lspSummary.servers.filter(s => s.scoreable === true).length
 }};
 
 console.log(JSON.stringify(result));
@@ -270,7 +272,37 @@ console.log(JSON.stringify(result));
         # derived from that value, and an unmet expectation is recorded so the
         # suite can genuinely fail.
         has_all_mcp = len(data.get("mcpIds", [])) >= 7
-        has_all_lsp = len(data.get("lspIds", [])) >= 6
+        # ── LSP EXPECTATION, HONESTY-AUDITED (Chain Key 360ea36c28e66d9d) ────
+        # FORENSIC FINDING: this was `>= 6`, a hardcoded catalogue size asserted
+        # against a REGISTRY LIST — never against a measurement. It was satisfied
+        # by the mere presence of six entries in `serversCenterManifest.json`,
+        # including three that cannot speak LSP at all (typescript ships a
+        # compiler CLI, eslint a linter CLI, dotnet an SDK). So "6 of 6 LSP
+        # servers integrated" was never a statement about LSP: it was a statement
+        # about a JSON file. The suite then printed a VERIFIED seal on that basis.
+        #
+        # What the registry can honestly be asked for is: the expected INVENTORY
+        # is enumerated, every entry declares its category, and the number of
+        # scoreable language servers is exactly what the denominator is built
+        # from. Readiness is deliberately NOT asserted here — this suite has no
+        # live probe, and claiming it would reinstate the very fabrication the
+        # refactor removed. Readiness is verified by scripts/verify_telemetry_truth.ts
+        # against a real measured payload.
+        lsp_ids = data.get("lspIds", [])
+        lsp_cats = data.get("lspCategories", {})
+        lsp_scoreable = data.get("lspScoreableCount")
+        expected_lsp_inventory = ["typescript", "eslint", "bash", "yaml", "pyright", "dotnet"]
+        lsp_inventory_complete = all(s in lsp_ids for s in expected_lsp_inventory)
+        lsp_categories_declared = all(
+            isinstance(lsp_cats.get(s), str) and lsp_cats.get(s) for s in expected_lsp_inventory
+        )
+        # The scoreable count must equal the number of entries categorised
+        # `language-server` — recomputed here, not trusted from the payload.
+        recomputed_scoreable = sum(
+            1 for s in expected_lsp_inventory if lsp_cats.get(s) == "language-server"
+        )
+        lsp_denominator_honest = lsp_scoreable == recomputed_scoreable
+        has_all_lsp = lsp_inventory_complete and lsp_categories_declared and lsp_denominator_honest
         valid_chain = data.get("chainKey") == CHAIN_KEY_ID
         center_available = data.get("isAvailable") is True
 
@@ -280,9 +312,18 @@ console.log(JSON.stringify(result));
         report("Registry Center Available", data.get("isAvailable"), center_available)
         report("Total MCP Servers Loaded",
                f"{data.get('mcpCount')} ({data.get('mcpIds')})", has_all_mcp)
-        report("Total LSP Servers Loaded",
-               f"{data.get('lspCount')} ({data.get('lspIds')})", has_all_lsp)
+        report("LSP Inventory Entries",
+               f"{data.get('lspCount')} ({data.get('lspIds')})", lsp_inventory_complete)
+        report("LSP Categories Declared",
+               f"{lsp_cats}", lsp_categories_declared)
+        report("LSP Scoreable (language-server) Count",
+               f"declared={data.get('lspScoreableCount')} recomputed={recomputed_scoreable}",
+               lsp_denominator_honest)
         report("Verified Chain Key", data.get("chainKey"), valid_chain)
+        print("  [NOTE] Readiness is NOT asserted by this suite: it inspects a registry")
+        print("         listing, never a live handshake. Asserting it here would repeat")
+        print("         the fabrication this refactor removed. Live readiness is")
+        print("         verified by scripts/verify_telemetry_truth.ts against measured data.")
 
         # `isAvailable` is now part of the verdict. Previously it was printed as
         # an `[OK]` line but never evaluated, so a centre that reports itself
@@ -333,8 +374,17 @@ def main():
 
     print("\n" + "=" * 80)
     if all_passed:
-        print(" [ALL SUITES PASSED] All 6 MCP Servers + All 6 LSP Servers Successfully Integrated!")
-        print(f" Cryptographic Verification Seal: SEC-CENTER-MATRIX-{CHAIN_KEY_ID}-VERIFIED")
+        # The old banner read "All 6 MCP Servers + All 6 LSP Servers Successfully
+        # Integrated!" and minted a VERIFIED seal. Both were false: the registry
+        # holds 7 MCP servers, and 3 of the 6 "LSP servers" are not language servers.
+        # The seal is removed outright — a seal is an attestation of INTEGRITY, and
+        # a static manifest listing attests only that a file exists. Nothing here
+        # verified a handshake, so nothing here may certify one.
+        print(" [ALL SUITES PASSED] Registry inventory verified: all 7 MCP servers and")
+        print("                     all 6 LSP inventory entries present and categorised,")
+        print("                     with the scoreable denominator matching the")
+        print("                     language-server category count.")
+        print(" READINESS IS NOT ESTABLISHED BY THIS SUITE (no live handshake performed).")
         print("=" * 80 + "\n")
         return 0
     else:

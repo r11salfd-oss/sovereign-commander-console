@@ -240,8 +240,14 @@ def main():
 
     print("\n" + "=" * 80)
     if all_passed:
-        print(f" [ALL SUITES PASSED] Sovereign MCP Protocol & Tool Developer Verified!")
-        print(f" Cryptographic Verification Seal: SEC-MCP-{CHAIN_KEY_ID}-VERIFIED")
+        print(" [ALL SUITES PASSED] Sovereign MCP Protocol & Tool Developer Verified:")
+        print("   - JSON-RPC 2.0 handshake, tools/resources/prompts catalogue, and the")
+        print("     -32602 / -32601 error envelopes all behave as specified.")
+        print("   - the audit chain tool returns a DECLARED verdict with a reason for")
+        print("     every negative, and still REJECTS a wrong chain key.")
+        print(" NOTE: a chain verdict of UNVERIFIED_* is an ACCEPTED, correct outcome.")
+        print("       This suite certifies protocol conformance and key-binding only.")
+        print("       It does NOT certify the ledger as intact, and no seal is minted.")
         print("=" * 80 + "\n")
         return 0
     else:
