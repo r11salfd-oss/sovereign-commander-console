@@ -91,6 +91,10 @@ const DEFAULT_EXPECTATIONS = 'C:\\ProgramData\\sovereign-commander-console\\expe
 const VERDICT_FOR = { BLOCKER: 'FAIL', REQUIRED: 'FAIL', ADVISORY: 'DEGRADED' };
 const VERDICT_ORDER = { READY: 0, DEGRADED: 1, FAIL: 2 };
 
+// How long the wrapper waits after a stop signal before it will forcibly
+// terminate the prober. Generous on purpose: the graceful path must win.
+const STOP_GRACE_MS = 60000;
+
 const INTEGRITY_BY_RID = {
   0x1000: 'Low', 0x2000: 'Medium', 0x3000: 'High', 0x4000: 'System', 0x5000: 'Protected',
 };
@@ -228,42 +232,60 @@ function bootIdentity(bootIdResult) {
 // checks
 // ---------------------------------------------------------------------------
 
-async function checkAccount() {
+async function checkAccount(expectations) {
   const whoami = join(systemRoot(), 'System32', 'whoami.exe');
   const r = await runCapture(whoami, ['/groups', '/fo', 'csv', '/nh'], 6000);
   const text = `${r.stdout}\n${r.stderr}`;
   const ridMatch = /S-1-16-(\d+)/i.exec(text);
   const rid = ridMatch ? Number.parseInt(ridMatch[1], 10) : null;
   const account = `${os.hostname()}\\${process.env.USERNAME || '<USERNAME-UNSET>'}`;
+  // The account the installer says the service runs as is authoritative; the
+  // process's own USERNAME is not. MEASURED: a LocalSystem service reports
+  // USERNAME=DESKTOP-7FSRQ0H$ (the machine account), not SYSTEM, so a
+  // USERNAME-keyed lookup for the profile directory returns nothing.
+  const declared = (expectations && expectations.data && expectations.data.serviceAccount) || null;
+  const serviceAccountProfile = guessServiceAccountProfile(declared);
   return check(
     'account', 'REQUIRED',
     Boolean(process.env.USERNAME) && Boolean(os.hostname()),
     process.env.USERNAME
-      ? `running as ${account}`
+      ? `running as ${account} (integrity ${rid === null ? 'UNKNOWN' : (INTEGRITY_BY_RID[rid] || `Unknown(${rid})`)})`
       : 'USERNAME is not set in the service environment; the identity is unknown',
     {
       account,
       userName: process.env.USERNAME || null,
       computerName: process.env.COMPUTERNAME || null,
-      userProfile: process.env.USERPROFILE || null,
+      userProfileAsDelivered: env_raw_UserProfile(),
       integrityRid: rid,
       integrityLevel: rid === null ? 'UNKNOWN' : (INTEGRITY_BY_RID[rid] || `Unknown(${rid})`),
       integrityMethod: rid === null ? null : 'whoami /groups SID S-1-16-<rid>',
       integrityError: rid === null ? (r.stderr.trim() || `whoami.exe exit=${r.code}`) : null,
       administratorsSidPresent: /S-1-5-32-544/i.test(text),
       administratorsSidMeaning: 'presence of BUILTIN\\Administrators in the token; this is NOT a privilege audit',
-      serviceAccountProfile: guessServiceAccountProfile(),
+      declaredServiceAccount: declared,
+      serviceAccountProfile,
       underServiceAccountProfile: false,
-      underServiceAccountProfileNote: 'INTENTIONAL and MEASURED: install.ps1 pins APPDATA/USERPROFILE to the operator profile (README section 5) because a LocalSystem profile makes pyright measure OFFLINE and drops the console score from 70 to 60. The measurement identity is pinned deliberately; it is asserted against install-time expectations, not against the service account home.',
+      underServiceAccountProfileNote: 'INTENTIONAL and MEASURED: install.ps1 pins APPDATA/USERPROFILE to the operator profile (README section 5) because a LocalSystem profile makes pyright measure OFFLINE and drops the console score from 70 to 60. The measurement identity is pinned deliberately; it is asserted against install-time expectations, not against the service account home. The pinnedEnvironment check reports exactly what the platform delivered and what this wrapper corrected.',
     },
   );
 }
 
-function guessServiceAccountProfile() {
-  const user = (process.env.USERNAME || '').toUpperCase();
-  if (user === 'SYSTEM') return join(systemRoot(), 'System32', 'config', 'systemprofile');
-  if (user === 'LOCAL SERVICE') return join(systemRoot(), 'System32', 'config', 'serviceprofiles', 'localservice');
-  if (user === 'NETWORK SERVICE') return join(systemRoot(), 'System32', 'config', 'serviceprofiles', 'networkservice');
+function env_raw_UserProfile() {
+  return process.env.USERPROFILE || null;
+}
+
+function guessServiceAccountProfile(declaredAccount) {
+  const candidates = [declaredAccount, process.env.USERNAME].filter(Boolean).map((s) => String(s).toUpperCase());
+  for (const c of candidates) {
+    const bare = c.split('\\').pop();
+    // A LocalSystem service logon presents the MACHINE account (NAME$), never the
+    // literal string SYSTEM. MEASURED on this host.
+    if (bare === 'SYSTEM' || bare === 'LOCALSYSTEM' || bare === 'NT AUTHORITY\\SYSTEM' || bare.endsWith('$') || /^DESKTOP-[A-Z0-9]+\$$/.test(bare)) {
+      return join(systemRoot(), 'System32', 'config', 'systemprofile');
+    }
+    if (bare === 'LOCAL SERVICE') return join(systemRoot(), 'System32', 'config', 'serviceprofiles', 'localservice');
+    if (bare === 'NETWORK SERVICE') return join(systemRoot(), 'System32', 'config', 'serviceprofiles', 'networkservice');
+  }
   return null;
 }
 
@@ -713,8 +735,26 @@ function checkRepoAndManifest(env, expectations) {
   if (!manifestSt.__error) {
     try {
       const parsed = JSON.parse(readFileSync(manifest, 'utf8'));
-      const servers = parsed && (parsed.servers || parsed.entries || parsed.targets);
-      manifestHead = { serversDeclared: Array.isArray(servers) ? servers.length : null, topLevelKeys: parsed && typeof parsed === 'object' ? Object.keys(parsed).slice(0, 8) : null };
+      // MEASURED SHAPE on this manifest: the inventory lives under `mcp` and `lsp`
+      // as OBJECTS keyed by server id (shell, chrome-devtools, github, syncfusion,
+      // context7, playwright, sovereign-commander), NOT as arrays. The first
+      // version of this check only looked for arrays, so it reported
+      // serversDeclared=null on a perfectly valid manifest - a check that cannot
+      // see the inventory cannot detect the inventory shrinking.
+      const countOf = (v) => {
+        if (!v) return null;
+        if (Array.isArray(v)) return v.length;
+        if (typeof v === 'object') return Object.keys(v).length;
+        return null;
+      };
+      manifestHead = {
+        mcpServerCount: countOf(parsed && parsed.mcp),
+        lspServerCount: countOf(parsed && parsed.lsp),
+        mcpIds: parsed && parsed.mcp && typeof parsed.mcp === 'object' && !Array.isArray(parsed.mcp) ? Object.keys(parsed.mcp) : null,
+        manifestVersion: (parsed && parsed.manifest_version) || null,
+        root: (parsed && parsed.root) || null,
+        topLevelKeys: parsed && typeof parsed === 'object' ? Object.keys(parsed) : null,
+      };
     } catch (e) {
       manifestSt.__error = `unparsable: ${errText(e)}`;
     }
@@ -722,7 +762,7 @@ function checkRepoAndManifest(env, expectations) {
   const ok = !repoSt.__error && repoSt.isDirectory() && !manifestSt.__error && manifestSt.isFile();
   return check('repoAndManifest', 'REQUIRED', ok,
     ok
-      ? `repository root and the measurement manifest are present (${manifestHead && manifestHead.serversDeclared !== null ? `${manifestHead.serversDeclared} servers declared` : 'server count not parsed'})`
+      ? `repository root and the measurement manifest are present (${manifestHead ? `mcp inventory declares ${manifestHead.mcpServerCount} server(s), lsp inventory declares ${manifestHead.lspServerCount}` : 'inventory not parsed'})`
       : `repository root or manifest unusable: root=${repoRoot || '<unset>'} (${repoSt.__error || 'ok'}) manifest=${manifest || '<unset>'} (${manifestSt.__error || 'ok'})`,
     {
       repoRoot: repoRoot || null,
@@ -779,16 +819,60 @@ function announce(checks, verdict, stream) {
   write(`${MARKER}: verdict=${verdict} failedChecks=${failed.map((c) => `${c.severity}:${c.name}`).join(',')}\n`);
 }
 
+/**
+ * Write the readiness record, PRESERVING keys this process does not own.
+ *
+ * WRITER OWNERSHIP: the guard owns verdict / recordedAtUtc / recordedBy / boot /
+ * expectations / readinessFile / service. recover-prober.ps1 owns `recovery`.
+ *
+ * MEASURED BUG this fixes: the first version of this function overwrote the whole
+ * file, so every service restart ERASED the recovery record - including the
+ * record written moments earlier at logon. The one artefact an operator needs
+ * after a bad boot (did the recovery path fire?) was destroyed by the very event
+ * it describes. It is now merged, under the same exclusive lock the recovery
+ * script uses, and the write is atomic (temp file + rename) so a reader can never
+ * observe a half-written record.
+ */
 function writeReadinessFile(path, record) {
   if (!path) return { ok: false, error: 'no readiness path' };
+  const lock = `${path}.lock`;
+  let fd = null;
+  const deadline = Date.now() + 5000;
+  while (fd === null) {
+    try { fd = openSync(lock, 'wx'); } catch (e) {
+      if (Date.now() > deadline) return { ok: false, path, error: `could not lock ${lock}: ${errText(e)}` };
+      try { if (Date.now() - safeStat(lock).mtimeMs > 10000) unlinkSync(lock); } catch { /* cleared by the peer */ }
+      sleepMs(50);
+    }
+  }
   try {
+    let existing = {};
+    let preserved = [];
+    try {
+      existing = JSON.parse(stripBom(readFileSync(path, 'utf8')));
+      if (existing && typeof existing === 'object') {
+        preserved = Object.keys(existing).filter((k) => !Object.prototype.hasOwnProperty.call(record, k));
+      }
+    } catch { existing = {}; }
+    // The record states its own write outcome, so the file on disk is
+    // self-describing. This assignment MUST come BEFORE the merge below: `merged`
+    // is a shallow copy, so a field set afterwards never reaches the copy and
+    // therefore never reaches the disk. (MEASURED: setting it after the merge made
+    // readinessWrite silently null in the file the operator reads.)
+    record.readinessWrite = { path, ok: true, preservedKeys: preserved, error: null };
+    const merged = { ...existing, ...record };
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
     renameSync(tmp, path);
-    return { ok: true, path };
+    return record.readinessWrite;
   } catch (e) {
-    return { ok: false, path, error: errText(e) };
+    const failure = { path, ok: false, preservedKeys: [], error: errText(e) };
+    record.readinessWrite = failure;
+    return failure;
+  } finally {
+    try { closeSync(fd); } catch { /* already closed */ }
+    try { unlinkSync(lock); } catch { /* already gone */ }
   }
 }
 
@@ -844,7 +928,7 @@ async function runSelfTest(opts, childArgs) {
   const [bootIdResult] = await Promise.all([readBootId()]);
 
   const checks = [
-    await checkAccount(),
+    await checkAccount(expectations),
     await checkServerRoot(env, expectations.data ? expectations.data.paths.serverRoot : null),
     checkPinnedEnvironment(env, expectations, secretNames),
     checkRuntimeEntries(childArgs, expectations),
@@ -897,7 +981,6 @@ async function runSelfTest(opts, childArgs) {
   };
 
   const written = writeReadinessFile(readinessPath, record);
-  record.readinessWrite = written;
   if (!written.ok) {
     // Loud, because a prober that cannot prove its own readiness must not be
     // allowed to look like one that can.
@@ -960,17 +1043,35 @@ async function runService(opts) {
 
   // A console control event (NSSM AppStopMethodConsole=0) is broadcast to every
   // process attached to the console, so the prober's own SIGINT handler runs
-  // handle.close() and reaps its children. This wrapper deliberately does NOT
-  // exit on a signal: exiting here would let NSSM TerminateProcess the prober
-  // mid-shutdown, which is the abrupt-kill path HOST_PROBER.md section 12 warns
-  // about. The wrapper's exit code is always the PROBER's exit code.
-  let forwarded = false;
+  // handle.close() and reaps its children. MEASURED on this host: the wrapper's
+  // stdout shows "SIGINT received by the wrapper" at stop time, which is direct
+  // evidence the event reached the wrapper, and the prober shares that console.
+  //
+  // The wrapper deliberately does NOT call child.kill(). MEASURED REASON, and it
+  // is load-bearing: on Windows libuv maps a signal NAME to TerminateProcess, so
+  // `child.kill('SIGINT')` never delivers SIGINT to the child - it abruptly kills
+  // it. The first stop through this wrapper produced
+  //     "the prober exited (code=null signal=SIGINT)"
+  // which is the signature of TerminateProcess, not of Node's SIGINT handler
+  // running process.exit(0) (that would report code=0, signal=null). The wrapper
+  // was therefore converting a graceful stop into exactly the abrupt kill that
+  // HOST_PROBER.md section 12 warns strands Chromium grandchildren.
+  //
+  // Instead: do nothing, let the prober finish, and escalate only if it has not
+  // exited after a generous deadline. Termination then becomes a logged,
+  // deliberate last resort rather than a race against the shutdown.
+  let signalled = false;
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'BREAK']) {
     process.on(sig, () => {
-      if (forwarded) return;
-      forwarded = true;
-      process.stdout.write(`${MARKER}: ${sig} received by the wrapper; the prober shares this console and receives it too. The wrapper will exit with the prober's own exit code.\n`);
-      try { child.kill(sig); } catch { /* the prober may already be gone */ }
+      if (signalled) return;
+      signalled = true;
+      process.stdout.write(`${MARKER}: ${sig} received by the wrapper. The prober shares this console and receives it too, so nothing is signalled from here - the wrapper exits with the PROBER's own exit code.\n`);
+      const killTimer = setTimeout(() => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        process.stderr.write(`${MARKER}: the prober had STILL not exited ${STOP_GRACE_MS}ms after ${sig}. Terminating it now. This is the abrupt path and can strand Chromium children; recorded rather than hidden.\n`);
+        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      }, STOP_GRACE_MS);
+      child.once('exit', () => clearTimeout(killTimer));
     });
   }
 
@@ -991,6 +1092,21 @@ async function runService(opts) {
     });
     child.on('exit', (code, signal) => {
       const exitCode = typeof code === 'number' ? code : (signal ? 1 : 0);
+      // 0xC000013A is STATUS_CONTROL_C_EXIT: Windows' way of saying "this process
+      // was ended by CTRL_C_EVENT without handling it". MEASURED, and it is not a
+      // fault: the layer the wrapper spawns is tsx's CLI, which installs no SIGINT
+      // handler, so it can lose a race against the prober's own clean exit(0).
+      // Two real outcomes were observed across repeated stops:
+      //     code=0              the prober's own SIGINT handler closed the server
+      //                          and exited 0 before the event reached the CLI
+      //     code=3221225786     the event reached the CLI first (0xC000013A)
+      // Both leave the prober stopped with the port released, and both are covered
+      // by NSSM's `AppExit Default Restart`, so the restart policy is unaffected.
+      // The distinction is logged rather than normalised away, because a silent
+      // normalisation would hide which of the two actually happened.
+      if (exitCode === 0xC000013A || exitCode === 3221225786) {
+        process.stdout.write(`${MARKER}: the spawned CLI layer was ended by CTRL_C_EVENT without handling it (0xC000013A). The prober's own SIGINT handler is unaffected - it closes the server and reaps its children. Both this and a clean 0 are covered by NSSM AppExit Default=Restart.\n`);
+      }
       process.stdout.write(`${MARKER}: the prober exited (code=${code} signal=${signal || 'none'}); the wrapper exits ${exitCode} so NSSM AppExit policy applies unchanged.\n`);
       resolve(exitCode);
     });

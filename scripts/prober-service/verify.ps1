@@ -50,6 +50,9 @@ param(
     [string]$ConsoleBaseUrl = 'http://127.0.0.1:3000',
     [switch]$SelfHealTest,
     [int]$RecoveryBudgetSec = 120,
+    # Make an UNVERIFIED link fatal. Off by default on purpose: see the
+    # Check-Unverified note. On after a real reboot, when UNVERIFIED must not pass.
+    [switch]$RequireBootProof,
     [string]$TranscriptPath
 )
 
@@ -69,6 +72,7 @@ if (-not (Test-IsAdmin)) {
     $named = @{ 'TranscriptPath' = $tpath; 'Port' = "$Port"; 'Bind' = $Bind; 'ConsoleBaseUrl' = $ConsoleBaseUrl; 'RecoveryBudgetSec' = "$RecoveryBudgetSec"; 'ServiceName' = $ServiceName }
     $switches = @()
     if ($SelfHealTest) { $switches += '-SelfHealTest' }
+    if ($RequireBootProof) { $switches += '-RequireBootProof' }
     $cmdLine = New-RelaunchCommandLine -ScriptPath $PSCommandPath -Named $named -Switches $switches
     $p = Start-Process -FilePath (Get-ElevationShell) -Verb RunAs -ArgumentList $cmdLine -Wait -PassThru
     $p.WaitForExit()
@@ -86,11 +90,30 @@ if ($TranscriptPath) {
 }
 
 $script:Failures = 0
+$script:Unverified = 0
 function Check {
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][bool]$Pass, [Parameter(Mandatory)][string]$Detail)
     if ($Pass) { Write-Host "    [PASS] $Name - $Detail" -ForegroundColor Green }
     else       { Write-Host "    [FAIL] $Name - $Detail" -ForegroundColor Red; $script:Failures++ }
     return $Pass
+}
+function Check-Unverified {
+    <#
+      A link that has NOT been tested is not the same as a link that is broken.
+
+      Conflating the two is itself a defect: if "the service started at boot" is
+      counted as a FAILURE, then verify.ps1 is permanently red on any machine that
+      has not been power-cycled since installation, and it stops being usable as a
+      regression detector. If instead it is silently skipped, the operator is told
+      the system is fine when one link in the chain is untested.
+
+      So it gets its own third state, printed in amber, counted separately,
+      named in the RESULT line, and fatal only under -RequireBootProof.
+    #>
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Detail)
+    Write-Host "    [UNVERIFIED] $Name - $Detail" -ForegroundColor Yellow
+    $script:Unverified++
+    return $false
 }
 
 Write-Host ''
@@ -277,19 +300,24 @@ if ($null -eq $rd.Record) {
             Check 'this start happened at boot' $true "the prober recorded its readiness $([int]$uptimeAtStart)s after power-on (window 900s)"
         } else {
             Write-Warn "the prober recorded its readiness $([int]$uptimeAtStart)s after power-on, which is OUTSIDE the 900s startup window."
-            Write-Warn '=> the service was started BY HAND. The boot path remains UNVERIFIED for this start.'
-            Write-Warn '=> A power cycle, or boot-verdict.ps1 immediately after one, is the only thing that can close this link.'
-            Check 'this start happened at boot' $false "uptimeSecAtStart=$uptimeAtStart > 900s"
+            Write-Warn '=> the service was started BY HAND. The boot path is NOT proven for this start.'
+            Write-Warn '=> boot-verdict.ps1, run immediately after a real reboot, is what closes this link.'
+            Check-Unverified 'this start happened at boot' "uptimeSecAtStart=$uptimeAtStart > 900s: the service was started by hand, so no boot start has been observed. This link is UNTESTED, not broken."
         }
     } else {
         Check 'this start happened at boot' $false 'the record carries no uptimeSecAtStart'
     }
 
-    # The hazards the record must be able to speak about at all.
+    # The hazards the record must be able to speak about at all. The Docker
+    # gateway check is NAMED after the host it probes, because the probe name is
+    # exactly what it is testing - an earlier version of this list looked for
+    # 'dockerGateway' and reported a coverage gap that did not exist.
     $checkNames = @(Get-Prop $rSvc 'checks' @() | ForEach-Object { $_.name })
-    foreach ($must in @('account', 'serverRoot', 'pinnedEnvironment', 'runtimeEntries', 'workingDirectoryAndPath', 'dockerGateway')) {
+    foreach ($must in @('account', 'serverRoot', 'pinnedEnvironment', 'runtimeEntries', 'workingDirectoryAndPath', 'repoAndManifest')) {
         Check "record covers hazard '$must'" ($checkNames -contains $must) "present=$($checkNames -contains $must)"
     }
+    $dockerChecked = @($checkNames | Where-Object { $_ -like 'host.docker.internal*' })
+    Check 'record covers the Docker gateway hazard' ($dockerChecked.Count -gt 0) "check name(s) found: $($dockerChecked -join ', ')"
 }
 
 # The 401 gate has not been weakened by anything in this file. Re-asserted here
@@ -486,10 +514,20 @@ if ($SelfHealTest) {
 }
 
 Write-Host '================================================================' -ForegroundColor DarkGray
-if ($script:Failures -eq 0) {
-    Write-Host ' RESULT: ALL CHECKS PASSED' -ForegroundColor Green
+if ($script:Failures -eq 0 -and ($script:Unverified -eq 0 -or -not $RequireBootProof)) {
+    if ($script:Unverified -eq 0) {
+        Write-Host ' RESULT: ALL CHECKS PASSED' -ForegroundColor Green
+    } else {
+        Write-Host " RESULT: PASS - 0 failed check(s), $($script:Unverified) UNVERIFIED link(s)" -ForegroundColor Yellow
+        Write-Host ' UNVERIFIED means UNTESTED, not working and not broken. The link(s) above have' -ForegroundColor Yellow
+        Write-Host ' not been exercised yet. Run .\boot-verdict.ps1 after a reboot to close them,' -ForegroundColor Yellow
+        Write-Host ' or use -RequireBootProof to make an UNVERIFIED link fatal.' -ForegroundColor Yellow
+    }
     exit 0
+} elseif ($script:Failures -gt 0) {
+    Write-Host " RESULT: FAIL - $script:Failures failed check(s), $($script:Unverified) unverified link(s)" -ForegroundColor Red
+    exit 1
 } else {
-    Write-Host " RESULT: FAIL - $script:Failures failed check(s)" -ForegroundColor Red
+    Write-Host " RESULT: FAIL - $($script:Unverified) UNVERIFIED link(s) and -RequireBootProof was given" -ForegroundColor Red
     exit 1
 }
