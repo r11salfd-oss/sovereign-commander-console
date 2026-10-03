@@ -89,6 +89,13 @@ npx tsx scripts/host_prober.ts --once |
 
 ### 2.2 Long-running service
 
+> **PREFER THE INSTALLED SERVICE.** The prober is now a Windows service that
+> starts at boot and restarts itself (§10). **Do not start it manually** — a
+> second instance cannot bind port 39711 and the manual one is the fragile
+> arrangement the service exists to replace. The command below is retained for
+> one-shot debugging and for `uninstall.ps1` recovery; stop it with `Ctrl+C`
+> (never Task Manager — §12).
+
 ```powershell
 $env:HOST_PROBER_TOKEN = '<see §3>'
 $env:HOST_PROBER_ALLOWED_HOSTS = 'host.docker.internal'
@@ -349,89 +356,225 @@ Commander's own launch configuration is untouched.
 
 ---
 
-## 10. INSTALLING AS A SERVICE (documentation only — nothing was installed)
+## 10. THE SERVICE (installed, measured, self-healing)
 
-Pick **one**. All three require `tsx` and this repo on the host.
-
-### 10.1 NSSM (recommended — native Windows service)
-
-```powershell
-# 1. Download nssm from https://nssm.cc/download , extract to C:\tools\nssm
-# 2. Register (run elevated):
-C:\tools\nssm\nssm.exe install SovereignHostProber `
-  "C:\Program Files\nodejs\node.exe" `
-  "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\node_modules\tsx\dist\cli.mjs" `
-  "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\scripts\host_prober.ts"
-
-# 3. Set the service environment (scopes the secret to THIS service):
-C:\tools\nssm\nssm.exe set SovereignHostProber AppEnvironmentExtra `
-  HOST_PROBER_TOKEN=<token> `
-  HOST_PROBER_ALLOWED_HOSTS=host.docker.internal `
-  HOST_PROBER_ROOT=E:\Servers-Center
-
-# 4. Working directory (so the repo manifest is found):
-C:\tools\nssm\nssm.exe set SovereignHostProber AppDirectory `
-  "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console"
-
-# 5. Start and confirm:
-C:\tools\nssm\nssm.exe start SovereignHostProber
-netstat -ano | Select-String ":39711"   # expect 127.0.0.1:39711 LISTENING
-```
-
-### 10.2 Task Scheduler
+> **Status: INSTALLED AND RUNNING.** This section used to say "documentation only
+> — nothing was installed". That was true when written and is now **false**. The
+> prober is no longer a process somebody has to remember to start. It is a
+> Windows service. Every number below is a real measurement from this host,
+> quoted from real stdout. Scripts: [`prober-service/`](prober-service/README.md).
 
 ```powershell
-$action = New-ScheduledTaskAction `
-  -Execute "C:\Program Files\nodejs\node.exe" `
-  -Argument "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\node_modules\tsx\dist\cli.mjs C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\scripts\host_prober.ts" `
-  -WorkingDirectory "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console"
+cd C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\scripts\prober-service
 
-# Secrets must not be typed on the command line. Preferred: a SYSTEM-scoped
-# environment variable set once with setx /M, which the task inherits on logon.
-$trigger  = New-ScheduledTaskTrigger -AtStartup
-$settings = New-ScheduledTaskSettingsSet -RestartCount 3 `
-  -RestartInterval (New-TimeSpan -Minutes 1) `
-  -ExecutionTimeLimit ([TimeSpan]::Zero) `
-  -MultipleInstances IgnoreNew
-
-Register-ScheduledTask -TaskName "SovereignHostProber" `
-  -Action $action -Trigger $trigger -Settings $settings `
-  -User "NT AUTHORITY\SYSTEM" -RunLevel Highest
+.\install.ps1 -AdoptExistingProber   # idempotent, self-elevates, fail-closed
+.\verify.ps1                        # read-only gate; exit 1 on any failure
+.\verify.ps1 -SelfHealTest          # kills the prober, measures recovery
+.\uninstall.ps1                     # fully reversible
 ```
 
-### 10.3 PM2
+### 10.1 Identity, as installed
 
-```powershell
-npm i -g pm2
-pm2 start "C:\Program Files\nodejs\node.exe" `
-  --name sovereign-host-prober `
-  --cwd "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console" `
-  -- "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\node_modules\tsx\dist\cli.mjs" `
-       "C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\scripts\host_prober.ts"
-pm2 save
-pm2 startup     # then run the printed command elevated
+| Property | Value |
+|---|---|
+| Service name | `SovereignHostProber` |
+| Display name | `Sovereign Host Prober (MCP measurement instrument)` |
+| Status | `Running` |
+| Start type | `AutomaticDelayedStart` (`SERVICE_DELAYED_AUTO_START`) |
+| Account | `LocalSystem` — **not** the interactive user; see §10.6 |
+| Application | `C:\Program Files\nodejs\node.exe` |
+| Arguments | `"…\node_modules\tsx\dist\cli.mjs" "…\scripts\host_prober.ts"` |
+| Working dir | the repo root |
+| Logs | `%APPDATA%\sovereign-commander-console\host-prober.service[.err].log`, rotated at 10 MB |
+| Token | read from the token file at install; **length 43**, value never printed |
+| NSSM | `%LOCALAPPDATA%\sovereign-commander-console\tools\nssm\2.24-101\…\win64\nssm.exe` |
+
+### 10.2 How `tsx` was resolved for a non-interactive service
+
+**It was not resolved through `PATH` at all.** The service command line is
+three *absolute* paths: an absolute `node.exe`, an absolute
+`node_modules\tsx\dist\cli.mjs`, and an absolute `host_prober.ts`. Session 0 has
+no interactive shell and no user environment, so any `PATH` lookup would be a
+latent boot-time failure — precisely the failure this service exists to prevent.
+
+In addition the service's own `PATH` is **pinned** via NSSM
+`AppEnvironmentExtra`, rebuilt at install time from the **HKLM + HKCU registry
+values** (31 entries) rather than from whatever environment the installing shell
+happened to have. `NODE_OPTIONS` is pinned empty so a stray value elsewhere
+cannot break the boot start. `HOST_PROBER_REPO_ROOT` is pinned so the manifest
+is found by absolute path instead of by walking up from `cwd`.
+
+### 10.3 Restart policy — three independent layers
+
+| Layer | Setting | Trigger |
+|---|---|---|
+| 1 — NSSM | `AppExit Default=Restart`, plus explicit `0→Restart`, `1→Restart`, `2→Reboot`; `AppThrottle=3000`; `AppRestartDelay=3000` | the prober process exits |
+| 2 — SCM | `restart/5000`, `restart/10000`, `restart/30000`; counter reset `86400` | `nssm.exe` itself dies |
+| 3 — SCM | `SERVICE_DELAYED_AUTO_START` | host boot, nobody signed in |
+
+`AppStopMethodConsole=0` so `nssm stop` delivers a console control event and the
+prober's `SIGINT` handler runs `handle.close()` and reaps its live children.
+
+**Measured crash recovery:** `taskkill /F /T` against the prober's node process
+→ reachable again in **3466 ms**, `7/7 ONLINE`, console back to `70/100`.
+
+### 10.4 Measured outage and recovery, quoted
+
+```
+t0: taskkill /PID <prober> /F /T  (simulating a crash)
+recovery: recovered=True after 3466ms (budget 120s)
+post-recovery measurement: provenance=MEASURED_BY_PROBER online=7/7
+
+  --- OUTAGE WINDOW (prober killed) ---
+  prober reachable      : False  (t+2176ms after kill)
+  console healthScore   : UNVERIFIABLE
+  console mcpSource     : CONTAINER_FILESYSTEM_PROBE
+  console lspSource     : CONTAINER_FILESYSTEM_PROBE
+  console mcp total     : 0 online=0 source=CONTAINER_FILESYSTEM_PROBE
+  console lsp total     : 0 ready=0 source=CONTAINER_FILESYSTEM_PROBE
+  hostProber.reachable  : False
+  hostProber.mcp        : provenance=DEGRADED_UNVERIFIABLE unavailableReason=The host prober did not answer. No MCP verdict was established, so none is reported.
+  rationale             : No transport produced a measured verdict, so no score is published. A number here would assert a conclusion that no observation supports.
+  --- RECOVERED ---
+  console healthScore   : 70/100
+  console mcpSource     : HOST_PROBER_MEASURED
+  console mcp total     : 7 online=7
+  hostProber.reachable  : True
 ```
 
-> **Caveat:** PM2 and Task Scheduler both inherit the **user** environment, which
-> is why the token should be set machine-wide (`setx /M`) or, preferably, scoped to
-> the service as shown for NSSM.
+### 10.5 What NSSM was downloaded, and what was verified about it
+
+| Item | Value |
+|---|---|
+| URL | `https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip` |
+| Bytes | 415 458 |
+| SHA-1 | `ca2f6782a05af85facf9b620e047b01271edd11d` — **matches** the value published on `nssm.cc/download` |
+| SHA-256 | `99f5045fffbffb745d67fe3a065a953c4a3d9c253b868892d9b685b0ee7d07b8` — recorded, **not** verifiable against any publisher |
+| `win64/nssm.exe` SHA-256 | `eee9c44c29c2be011f1f1e43bb8c3fca888cb81053022ec5a0060035de16d848` |
+| Authenticode | **`Status=NotSigned`** on both `win32` and `win64` binaries |
+
+**Honest limits of that verification.** nssm.cc publishes **SHA-1 only**, and
+the binaries carry **no code signature**. So the integrity check proves *the
+bytes match what the vendor's page advertises*; it does **not** prove the vendor
+account was uncompromised, and SHA-1 is not collision-resistant. The
+**pre-release** `2.24-101` was chosen deliberately: nssm.cc states that Windows
+10 Creators Update and newer "should use prelease build 2.24-101 … to avoid an
+issue with services failing to start", and this host is Windows 11 build 26200.
+The stable `2.24` build is knowingly the wrong choice here.
+
+The binary is installed to `%LOCALAPPDATA%`, **outside the repository**, so it
+cannot be committed by accident.
+
+### 10.6 The account is `LocalSystem`, and that is not cosmetic
+
+A service running as an interactive user needs that user's **password** in the
+LSA secret store so the SCM can log it on at boot with nobody signed in. No
+password is available to the installer, and none may be typed into a script or
+a command line. The installer therefore *attempts* the account and **verifies**
+the result rather than assuming it:
+
+```
+--- attempting account: DESKTOP-7FSRQ0H\AA5II ---
+ObjectName set to 'DESKTOP-7FSRQ0H\AA5II' (SCM reports StartName='LocalSystem')
+[WARN] the SCM did not accept 'DESKTOP-7FSRQ0H\AA5II' as the service account; it reports StartName='LocalSystem'. Attempt rejected.
+--- attempting account: LocalSystem ---
+[OK]   account 'LocalSystem' WORKS: service Running, /probe/health ok=true
+```
+
+> **A false positive, found and fixed.** An earlier revision passed the literal
+> string `'CurrentUser'` to `nssm set ObjectName`. NSSM returned **exit 0**, the
+> SCM silently kept `LocalSystem`, the service started and looked perfect, and
+> the installer printed *"account 'CurrentUser' WORKS"*. It now compares
+> `Win32_Service.StartName` against the requested account and rejects the
+> attempt on mismatch. **A configuration command that returns success is not
+> evidence that the configuration took effect.**
+
+#### Running as `LocalSystem` silently changes *what is measured*
+
+`LocalSystem` has a different profile, so the prober measures a different
+machine than the operator sees. Measured:
+
+| Service environment | `pyright` verdict | Console score |
+|---|---|---|
+| `LocalSystem` default (`APPDATA` = `…\systemprofile\AppData\Roaming`) | `OFFLINE / EXIT_NONZERO_BEFORE_HANDSHAKE` | **60/100** |
+| `APPDATA`/`USERPROFILE` pinned to the operator profile | `ONLINE / HANDSHAKE_COMPLETED` | **70/100** |
+
+The cause is declared in `config/servers_center_manifest.json` itself: the
+`pyright` package lives in the **per-user** site-packages, CPython derives that
+path from `%APPDATA%`, and the manifest declares
+`command.env.passThrough: ["APPDATA"]` for exactly this reason. Under
+`LocalSystem` there is no pyright to import, so the interpreter exits nonzero.
+
+Note the shape of that failure: `hostProber.reachable` stayed `true` and
+`mcpSource` stayed `HOST_PROBER_MEASURED`. **It looked exactly like a pyright
+outage.** The installer now pins `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`,
+`HOMEDRIVE`, `HOMEPATH`, `TEMP`, `TMP` to the profile the instrument is meant to
+measure (paths, not secrets), restoring `70/100`. `-NoProfileMapping` opts out
+and measures the SYSTEM profile honestly.
+
+### 10.7 Stopping it: `taskkill` cannot do this cleanly on this host
+
+Installing over the old manual prober requires taking port 39711 back. Three
+measured facts, all of which shaped `install.ps1`:
+
+1. `taskkill /PID n` **without** `/F` only posts `WM_CLOSE` to top-level
+   windows. A prober started by `Start-Process npx.cmd` has no window:
+   `ERROR: The process with PID 10700 could not be terminated`.
+2. `CTRL_C_EVENT` (`send-ctrl-c.ps1`) is generated successfully — the sender
+   prints `ctrl-c-sent` — but a **background console process group does not
+   receive it**, so Node's `SIGINT` handler never ran and the port stayed bound.
+   `nssm stop` works precisely *because* NSSM owns a foreground console for the
+   service.
+3. Therefore `install.ps1` escalates: control event → `taskkill /T` (no `/F`) →
+   `taskkill /F /T`, and the last step **requires explicit
+   `-AllowForcedKill`**. `/T` matters: it takes the descendants with it, which
+   is strictly better for Chromium orphans than a forced kill of the parent
+   alone.
+
+The orphan check walks `ParentProcessId` from the stopped PID and reports only
+*that* process's surviving descendants.
+
+> **Near-miss worth recording.** An earlier orphan detector matched command
+> lines such as `chrome-devtools-mcp` and `playwright\mcp`. It matched **22 live
+> processes belonging to `opencode-cli.exe` — the operator's own MCP servers**,
+> not prober leftovers. A cleanup step built on that filter would have killed
+> the operator's tooling. Command-line matching is not process ownership.
+
+### 10.8 Alternatives considered and not used
+
+Task Scheduler and PM2 both inherit the **user** environment and need a
+`setx /M` machine-wide token, which is worse isolation than scoping the secret
+to one service. NSSM scopes the secret to `HKLM\…\Services\SovereignHostProber`
+and deletes it with the service. See `prober-service/README.md` §4.
 
 ---
 
 ## 11. VERIFYING AN INSTALLATION
 
 ```powershell
-# 1. Liveness (unauthenticated)
+# 0. The whole gate, read-only, non-zero exit on any failure. Start here.
+cd C:\Users\AA5II\sovereign-commander-console\sovereign-commander-console\scripts\prober-service
+.\verify.ps1
+
+# 1. Service state and boot-time start type
+Get-Service SovereignHostProber | Format-List Name,Status,StartType
+Get-CimInstance Win32_Service -Filter "Name='SovereignHostProber'" |
+  Select-Object StartName,StartMode,ProcessId
+
+# 2. Liveness (unauthenticated)
 curl.exe -s http://127.0.0.1:39711/probe/health
 
-# 2. Measured status (authenticated)
+# 3. The security control: this MUST be 401
+curl.exe -s -o - -w "\nHTTP=%{http_code}\n" http://127.0.0.1:39711/probe/mcp/status
+
+# 4. Measured status (authenticated)
 curl.exe -s -H "Authorization: Bearer $env:HOST_PROBER_TOKEN" `
   http://127.0.0.1:39711/probe/mcp/status
 
-# 3. Bound to loopback only — never 0.0.0.0
+# 5. Bound to loopback only — never 0.0.0.0
 netstat -ano | Select-String ":39711"
 
-# 4. From inside the running console container (read-only; does not disturb it)
+# 6. From inside the running console container (read-only; does not disturb it)
 docker exec sovereign-commander-console node -e "
   fetch('http://host.docker.internal:39711/probe/mcp/status',{headers:{authorization:'Bearer '+process.env.HOST_PROBER_TOKEN}})
     .then(r=>r.json()).then(j=>console.log(j.summary)).catch(e=>console.log('UNVERIFIABLE:',e.message))"
@@ -464,11 +607,25 @@ docker exec sovereign-commander-console node -e "
   `TerminateProcess` gives the prober no opportunity to run *any* cleanup, so
   `taskkill /T` in the settle path never gets a chance. Graceful shutdown
   (`SIGINT`/`SIGTERM`, which routes through `killAllChildren()`) is clean.
-  **Operational rule: always stop the prober gracefully.** With NSSM, use
-  `nssm stop SovereignHostProber` rather than Task Manager; with PM2 use
-  `pm2 stop`. The proper fix is a Windows **Job Object** with
-  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, which requires native code and therefore
-  a dependency the Commander has not approved — not implemented.
+  **Operational rule: always stop the prober gracefully.** The service makes
+  this easy and safe: `nssm stop SovereignHostProber`, **not** Task Manager.
+  (`AppStopMethodConsole=0` is what makes this true — NSSM delivers a console
+  control event, so the `SIGINT` handler actually runs.) If you must use
+  `taskkill`, use `/T` so the tree goes with it; `install.ps1` does exactly that
+  and then reports which descendants survived. The proper fix is a Windows
+  **Job Object** with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, which requires
+  native code and therefore a dependency the Commander has not approved — not
+  implemented.
+- **The service runs as `LocalSystem`, not the operator's account.** A service
+  cannot run as an interactive user without a stored password. §10.6 pins the
+  measured profile so the instrument's identity is explicit and produces the
+  same `70/100` as the manual process did, but the process identity itself is
+  SYSTEM. Anything on this host that depends on being the logged-in user (a
+  user-mode credential store, a per-user license, a mapped network drive) will
+  not be visible to the service. `E:` was verified to be a **local** disk
+  (`Win32_LogicalDisk DriveType=3`, ReFS, "DevDrive"), so the Servers Center
+  tree is reachable from SYSTEM; a network or per-user-mounted root would not be.
+- **An actual reboot was not performed** — see §14.3.
 - **Concurrency of Chromium.** Probes of `chrome-devtools` and `playwright` are
   bounded to 3 in parallel, but a sweep can transiently run two browsers at once.
   Verified non-disruptive to a concurrent interactive Chrome session (probes use
@@ -480,14 +637,131 @@ docker exec sovereign-commander-console node -e "
 
 | Symptom | Likely cause | Action |
 |---|---|---|
+| Console shows `UNVERIFIABLE` / `CONTAINER_FILESYSTEM_PROBE` | **The instrument is not running.** `Get-Service SovereignHostProber` | §10. `\prober-service\verify.ps1` tells you which check failed |
+| Console shows `UNVERIFIABLE` but took ~90 s to appear | Prober accepts TCP and never answers | Same as above; §14.1 explains why the payload cannot tell you which it was |
+| `healthScore` fell to 60/100 with `pyright OFFLINE` | Service running under a profile where pyright is not installed | §10.6 — the measurement identity is wrong; reinstall with `-MeasuredProfile` |
+| `Get-Service` shows `Stopped` right after an install | The service account could not be logged on | §10.6; `nssm get SovereignHostProber AppParameters`, then the Application event log |
 | `HOST_PROBER_TOKEN must be set…` | Token missing/short | §3 |
 | `HOST_PROBER_BIND="…" is refused` | Non-loopback bind attempted | Remove the variable |
 | Console gets `UNVERIFIABLE / PROBER_UNREACHABLE` | Prober down, or Host header refused | Start the service; ensure `HOST_PROBER_ALLOWED_HOSTS` contains `host.docker.internal` |
 | Console gets `UNVERIFIABLE / PROBER_UNAUTHORIZED` | Token mismatch | Compare both sides; `GET /probe/health` still answers 200, which distinguishes "down" from "wrong token" |
 | `429 rate limited` | >30 requests/min from one peer | Wait 60 s, or cache client-side |
 | Server reports `UNVERIFIABLE / ENTRYPOINT_ABSENT` | Server not on this host, or `HOST_PROBER_ROOT` wrong | Check the root; the probe never guessed |
-| Server reports `UNVERIFIABLE / SPAWN_PERMISSION_DENIED` | Prober lacks execute rights | Run as the account that owns the Servers Center tree |
+| Server reports `UNVERIFIABLE / SPAWN_PERMISSION_DENIED` | Prober lacks execute rights | `LocalSystem` on a local disk is fine; a network or per-user-mounted root is not |
 | GitHub server `OFFLINE` | PowerShell wrapper, or missing PE binary | The prober already invokes the `.exe`; check the entry in the manifest |
+
+---
+
+## 14. WHAT THE OPERATOR ACTUALLY SEES
+
+### 14.1 The state table
+
+Three states, all measured on this host against the running console at
+`http://127.0.0.1:3000/api/agents/framework`. **"Cause visible?" is the column
+that matters** — it asks whether the payload tells an operator *why* the number
+changed.
+
+| State | `healthScore` | `mcpSource` | `lspSource` | `mcp` / `lsp` totals | `hostProber.reachable` | Latency | Is the cause visible? |
+|---|---|---|---|---|---|---|---|
+| **UP** | `70/100` | `HOST_PROBER_MEASURED` | `HOST_PROBER_MEASURED` | `7/7` · `6/3` | `true` | <2 s | n/a — measurement is real |
+| **DOWN** (nothing listening) | `UNVERIFIABLE` | `CONTAINER_FILESYSTEM_PROBE` | `CONTAINER_FILESYSTEM_PROBE` | `0/0` · `0/0` | `false` | <1 s | **Yes, unambiguously** |
+| **SLOW** (accepts TCP, never answers) | `UNVERIFIABLE` | `CONTAINER_FILESYSTEM_PROBE` | `CONTAINER_FILESYSTEM_PROBE` | `0/0` · `0/0` | `false` | **90 s** | **No — indistinguishable from DOWN** |
+
+**The DOWN payload, quoted:**
+
+```
+healthScore    = UNVERIFIABLE
+anyMeasured    = False
+mcpSource      = CONTAINER_FILESYSTEM_PROBE
+lspSource      = CONTAINER_FILESYSTEM_PROBE
+rationale      = No transport produced a measured verdict, so no score is published. A number here would assert a conclusion that no observation supports.
+mcp total/online = 0/0 source=CONTAINER_FILESYSTEM_PROBE
+lsp total/ready  = 0/0 source=CONTAINER_FILESYSTEM_PROBE
+hostProber.reachable = False
+hostProber.mcp  = provenance=DEGRADED_UNVERIFIABLE unavailableReason=The host prober did not answer. No MCP verdict was established, so none is reported.
+hostProber.lsp  = provenance=DEGRADED_UNVERIFIABLE unavailableReason=The host prober did not answer. No LSP verdict was established, so none is reported.
+```
+
+### 14.2 Does the system still lie by omission? No — and one gap remains
+
+**It does NOT lie by omission.** Three properties were each verified by
+observation, not by reading code:
+
+1. **No number is published when nothing was measured.** `healthScore` is the
+   string `UNVERIFIABLE`, not a degraded score. The `rationale` says so in
+   plain words.
+2. **The instrument's absence is structurally visible, not just textual.**
+   `hostProber.reachable=false`, `hostProber.mcp.provenance=DEGRADED_UNVERIFIABLE`
+   with an explicit `unavailableReason`, and `mcpSource`/`lspSource` both flip to
+   `CONTAINER_FILESYSTEM_PROBE`. A consumer reading only `mcpSource` cannot
+   mistake a lost instrument for a measured result.
+3. **No per-server `OFFLINE` is invented.** Totals are `0/0`, consistent with §1
+   rule 2: `UNVERIFIABLE` is never demoted to `OFFLINE`. A prober outage did not
+   become seven phantom server outages.
+
+> **Correction to an earlier claim in this document's own brief:** the failure
+> mode was previously described as *"healthScore collapses from 70/100 to
+> 40/100"*. **That is no longer what the system does, and it is no longer the
+> right thing to build towards.** Publishing `40/100` would be a lie of the same
+> species this system exists to remove: a number asserting a conclusion no
+> observation supports. The current behaviour — publish nothing — is correct and
+> should be preserved.
+
+**The one real remaining gap, stated plainly:**
+
+> **In the SLOW state the console cannot distinguish "the prober is absent" from
+> "the prober is wedged".** Both produce a byte-identical payload with
+> `hostProber.reachable=false` and `unavailableReason="The host prober did not
+> answer."` — the word *answer* covers both *there was nothing there* and *it
+> never answered*. The only distinguishing signal a consumer has is **latency**:
+> DOWN answers in under a second, SLOW blocks for 90 s. Latency is not in the
+> payload.
+>
+> **Recommended follow-up (NOT implemented — `server.ts` is out of this task's
+> file ownership):** give the client result a *reason* distinct from
+> `PROBER_UNREACHABLE`, e.g. `PROBER_TIMEOUT`, and surface it on
+> `healthScoreBasis`. The client already has `PROBER_TIMEOUT` in its reason
+> vocabulary (`scripts/host_prober_client.ts`), and the console already
+> distinguishes *how* it is unreachability-free of effort — so the information
+> may already be reaching the API and only needs to be published.
+
+**A second, smaller gap:** the console's own client timeout is **15 000 ms**
+(`timeoutMs = options.timeoutMs ?? 15_000`), yet `/api/agents/framework` took
+**90 s** to return in the SLOW state. The endpoint's latency therefore comes
+from somewhere other than the single client timeout — most plausibly more than
+one fetch being awaited, or a retry. An operator's dashboard will appear frozen
+for 90 s before saying anything. Worth a look in `server.ts`.
+
+### 14.3 What is UNVERIFIED
+
+Stated rather than implied:
+
+- **An actual reboot was not performed.** Not permitted by this task. Boot
+  behaviour is **UNVERIFIED by execution**. What *is* proven: the start type is
+  `SERVICE_DELAYED_AUTO_START`, the account is `LocalSystem` (which requires no
+  logon and no stored password), every absolute path the service needs exists
+  and was resolved from the registry, and crash recovery is proven at 3466 ms.
+  What is *not* proven: that Windows actually starts it after a power cycle, and
+  that nothing in a cold-boot environment (no user profile, no mapped drives,
+  Docker not yet running) breaks it.
+- **A power-loss / BSOD recovery** (the `AppExit 2 → Reboot` path) is untested.
+- **Sustained soak** under continuous polling is unproven. Only the runs quoted
+  here.
+- **`nssm.exe` itself being killed** (SCM Recovery layer 2) was configured and
+  read back via `sc qfailure`, but was not exercised.
+- **Token rotation** across the service boundary is untested.
+
+### 14.4 Residual risk
+
+| # | Risk | Severity | Mitigation / status |
+|---|---|---|---|
+| 1 | `LocalSystem` is a high-privilege process that spawns untrusted-ish child MCP servers and headless Chromium | **HIGH** | Inherent to the platform's boot-start-without-a-password constraint. It is also *lower* privilege than the interactive-user option that requires storing a password. Child env is scrubbed (control 10); the bound is loopback-only; the token gate is re-verified after every install. |
+| 2 | The bearer token is stored in plaintext in `HKLM\…\Services\SovereignHostProber\Parameters` | MEDIUM | Readable by Administrators/SYSTEM only. Removed with the service. Not committed, not printed. |
+| 3 | NSSM is **unsigned**, verified only against a publisher-published **SHA-1** | MEDIUM | Cannot detect a compromised vendor page. Prefer a signed package manager (`winget`/`chocolatey`) if one becomes available. |
+| 4 | Boot start is configured but unproven (§14.3) | MEDIUM | `verify.ps1` is the gate; run it after the next real reboot. |
+| 5 | A forced kill can strand Chromium processes | LOW | Service is always stopped with `nssm stop`; installer reports surviving descendants; `/T` is always used. |
+| 6 | Two prober instances could contend for the port if someone re-runs the old manual start command | LOW | The service holds the port first; a second bind fails loudly. Worth an operator note: **do not run §2.2 any more.** |
+| 7 | The console cannot distinguish SLOW from DOWN (§14.2) | LOW-MEDIUM | Recommended follow-up in `server.ts`; latency is the only current signal. |
 
 ---
 

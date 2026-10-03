@@ -101,7 +101,17 @@ export const DEPARTMENT_NAMES_AR: Record<string, string> = {
   console: 'قمرة القيادة والتحكم (Console Core)',
   chat: 'غرفة المحادثة والذكاء العصبي (Chat Chamber & AI Gateway)',
   approvals: 'حكومة الحوكمة والموافقات البشرية (HITL Governance)',
-  audit: 'سجل التدقيق وسلسلة التشفير غير القابلة للتلاعب (Audit Ledger)',
+  /* CORRECTION (sweep): was 'سجل التدقيق وسلسلة التشفير غير القابلة للتلاعب' —
+   * "the audit log and the TAMPER-PROOF hash chain". "غير قابلة للتلاعب"
+   * (incapable of being tampered with) is an absolute security property, and the
+   * system's own server-side code contradicts it: the ledger is process-local and
+   * in-memory only, is lost on every restart, is never written to disk, and has NO
+   * external anchor — which is why `/api/hitl/audit/verify` reports UNVERIFIED with
+   * that exact reasoning (server.ts:320-326). A label asserting tamper-proofness
+   * directly above a subsystem that self-reports as unverified is the worst kind of
+   * contradiction.
+   * Restated to the neutral, true description of what the department is. */
+  audit: 'سجل التدقيق وسلسلة كتل تشفيرية بإعادة حساب SHA-256 (Audit Ledger — forward-link only, no external anchor)',
   agents: 'فيلق الوكلاء والقدرات السيادية (Agent Corps Matrix)',
   forge: 'محرك الصياغة وفحص الأكواد التجميعي (Forge AST Engine)',
   developer: 'طرفية المطور وحاوية العزل (Developer CLI Sandbox)',
@@ -257,8 +267,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const allPassed = assertions.every(a => a.passed);
       return {
         passed: allPassed,
+        /* CORRECTION (sweep): was 'طوبولوجيا النماذج متكاملة' — "the model topology is
+         * INTEGRATED". Nothing here measures integration. The three assertions above
+         * are: HTTP 200, `Boolean(hasModels.reasoning)`, `Boolean(hasModels.coding)`,
+         * plus `coreServer.status === 'ONLINE'`. That is "two slots are non-empty",
+         * which is a presence check, not a topology.
+         * Restated to the three facts that were actually asserted. The measured
+         * values themselves are printed unchanged. */
         message: allPassed 
-          ? `طوبولوجيا النماذج متكاملة: الاستدلال [${hasModels.reasoning}] • البرمجة [${hasModels.coding}] • النواة: ONLINE` 
+          ? `خانتان من خانات النماذج مأهولتان [${hasModels.reasoning}] • [${hasModels.coding}] • الخادم المركزي: ${telemetryRes.subsystems?.coreServer?.status} — وهذا قياس تعبئة خانة لا قياس تكامل طوبولوجيا` 
           : 'فشل تدقيق مصفوفة النماذج',
         durationMs,
         assertions,
@@ -413,7 +430,19 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
   // 5. Approvals HITL - True Test-Driven Cryptographic Tamper Detection
   {
     id: 'approvals_crypto_signature_tamper_test',
-    name: 'اختبار الحوكمة والتوقيع المشفر وكشف التلاعب (Ed25519 & Anti-Tampering)',
+    /* CORRECTION (audit finding): the test's display name claimed
+     * '(Ed25519 & Anti-Tampering)'. There is no Ed25519 in this path — see the
+     * full analysis in the corrected recommendation. `/api/qa/crypto-verify`
+     * (server.ts:3485-3506) recomputes SHA-256 and performs a substring test
+     * against a client-supplied string. The test body already sent
+     * `algorithm: 'SHA-256'`, so the name was contradicting the payload it
+     * itself constructed. Renamed to state the mechanism that is actually used.
+     *
+     * The tamper-detection ASSERTIONS are genuinely sound and were left exactly
+     * as they were: mutating the payload changes the SHA-256, the substring stops
+     * matching, and `verified` returns false. That much is really measured.
+     */
+    name: 'اختبار الحوكمة وكشف التلاعب بإعادة حساب SHA-256 (SHA-256 Recomputation & Anti-Tampering)',
     department: 'approvals',
     depthTier: 'L3-Deep-System',
     description: 'توليد توقيع مشفر، والتحقق من قبول التوقيع الأصلي، ثم إرسال حمولة معدلة متلاعب بها والتأكد من رفض الخادم لها (verified === false).',
@@ -428,6 +457,21 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const enc = new TextEncoder();
       const hashBuffer = await crypto.subtle.digest('SHA-256', enc.encode(validStr));
       const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+      /* DOCUMENTED, NOT CHANGED — the `ED25519-SOV-` prefix below is a decorative
+       * label on a value that is NOT an Ed25519 signature. No Ed25519 key pair
+       * exists anywhere in this codebase, and no asymmetric operation is performed
+       * here or in `/api/qa/crypto-verify`. The server recomputes the same SHA-256
+       * and does `sigClean.includes(hashSegment)` (server.ts:3497) — so the ONLY
+       * part of this string that carries any meaning is the hex digest substring.
+       * The prefix could be deleted with zero effect on the test's outcome.
+       *
+       * It is left in place because this is a wire fixture and altering a value
+       * sent over the network is data-flow, which is out of scope for this
+       * prose-only pass. It is recorded here so no future reader mistakes the
+       * prefix for a cryptographic claim. The corresponding user-facing strings
+       * (the test's display name and the recommendation) HAVE been corrected,
+       * because those are the surfaces an operator actually reads.
+       */
       const signature = `ED25519-SOV-${hashHex.slice(0, 16).toUpperCase()}`;
 
       // Verify authentic payload on backend
@@ -439,7 +483,15 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       let verifyData = await safeJson(verifyRes);
 
       assertions.push({
-        name: 'قبول وتصديق التوقيع المشفر الأصلي (Authentic Signature Verified)',
+        /* CORRECTION (sweep): the previous name read "قبول وتصديق التوقيع المشفر"
+         * ("accept and authenticate the CRYPTOGRAPHIC SIGNATURE"). Nothing signed
+         * this payload. The server recomputed a hash the CLIENT had already
+         * computed and compared it to a string the CLIENT had already built. The
+         * assertion's LOGIC is unchanged and still meaningful: it proves the
+         * server's recomputation agrees for an unmodified payload. Only the name's
+         * claim of a signature was false, so only the name was reworded.
+         */
+        name: 'قبول الحمولة الأصلية عند تطابق إعادة الحساب (Unmodified Payload Recomputation Agrees)',
         condition: Boolean(verifyData.ok && verifyData.verified === true),
         expected: 'Verified == true for authentic payload',
         actual: `Verified: ${verifyData.verified}`,
@@ -506,16 +558,41 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       assertions.push({
         name: 'سلامة نقطة التحقق من سلسلة الكتل (Ledger Verify Endpoint Status)',
         condition: res.ok && data.ok === true,
-        expected: 'HTTP 200 with intact ledger state',
+        expected: 'HTTP 200 with the endpoint reachable (this asserts responsiveness only — HTTP 200 is not evidence of ledger integrity)',
         actual: `HTTP ${res.status}, Status: ${data.status}`,
         passed: res.ok && data.ok === true
       });
 
+      /* CORRECTION (sweep — NOT on the audit list, and the most consequential find
+       * in this file after the Ed25519 claim).
+       *
+       * `data.status === 'INTACT'` CAN NEVER BE TRUE any more.
+       * `/api/hitl/audit/verify` no longer emits 'INTACT' — server.ts:754 now
+       * returns `status: 'UNVERIFIED'`, with a stated reason at server.ts:320-326
+       * explaining that the ledger is process-local, in-memory only, and has no
+       * external anchor, and that tamper-evidence therefore "cannot be
+       * cryptographically proven". That server-side change was deliberate and
+       * correct; this client-side assertion was left behind still demanding the
+       * old fabricated verdict.
+       *
+       * Two consequences, both left intact because the LOGIC is not this pass's
+       * to change:
+       *   1. The assertion now always fails, so this test can no longer report a
+       *      pass. That is the honest outcome, but it is a behaviour change caused
+       *      by someone else's edit, and it is flagged here for the owner.
+       *   2. The name below — "عدم وجود كسر أو تلاعب في السلسلة (Ledger Intact
+       *      Integrity)" — asserts that no tampering exists. Nothing in this code
+       *      path can establish that; it can only observe what the server reports.
+       *      Reworded to describe the observation instead of the conclusion.
+       *
+       * `expected: 'HTTP 200 with intact ledger state'` had the same problem:
+       * an endpoint returning HTTP 200 says nothing about ledger integrity.
+       */
       const isIntact = data.status === 'INTACT';
       assertions.push({
-        name: 'عدم وجود كسر أو تلاعب في السلسلة (Ledger Intact Integrity)',
+        name: 'رصد حكم الخادم على السلسلة كما ورد دون استنتاج (Server Ledger Verdict Observed, Not Interpreted)',
         condition: isIntact,
-        expected: 'status == INTACT',
+        expected: "status == 'INTACT' — note: the server now reports 'UNVERIFIED' by design, so this assertion is expected to FAIL until the client is realigned with server.ts:754",
         actual: `status: ${data.status}`,
         passed: isIntact
       });
@@ -527,7 +604,7 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       assertions.push({
         name: 'استرجاع كتل التدقيق الحقيقية (Audit Blocks Retrieved)',
         condition: hasBlocks,
-        expected: 'Non-empty array of verified audit blocks',
+        expected: 'Non-empty array of audit blocks (recomputed forward-link SHA-256; NOT "verified" — there is no external anchor)',
         actual: hasBlocks ? `${auditBlocks.length} blocks active` : '0 blocks',
         passed: hasBlocks
       });
@@ -688,10 +765,18 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
       const lspPassed = lspValRes.ok && lspValData.passed === true && lspValData.errorsCount === 0;
 
       assertions.push({
-        name: 'تدقيق سلامة الأكواد عبر خادم LSP الحقيقي (tsserver AST Diagnostics)',
+        /* CORRECTION (sweep). The name claimed a REAL tsserver LSP server and the
+         * `actual` string claimed "LSP Verified". Neither is true: `lspValData.lspServer`
+         * is the server's own honest method string, which for TypeScript reads
+         * 'NONE — in-process ts.transpileModule() diagnostics; no tsserver process
+         * spawned, no LSP handshake'. Calling that "LSP Verified" contradicted the
+         * very field printed beside it. The word "Verified" was dropped; the method
+         * string is still printed verbatim, because it is the authoritative
+         * statement of what actually ran. The 0-errors fact is kept. */
+        name: 'تدقيق سلامة الأكواد بفحص داخل العملية (In-Process Static Check — NOT an LSP server)',
         condition: lspPassed,
-        expected: 'LSP Diagnostics pass with 0 syntax errors',
-        actual: lspPassed ? `LSP Verified: ${lspValData.lspServer} (0 errors)` : `Errors: ${lspValData.errorsCount}`,
+        expected: '0 syntax errors from the in-process check',
+        actual: lspPassed ? `0 errors — method: ${lspValData.lspServer}` : `Errors: ${lspValData.errorsCount}`,
         passed: lspPassed
       });
 
@@ -859,9 +944,16 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
 
       const countTen = gapData.totalGaps === 10 && Array.isArray(gapData.items) && gapData.items.length === 10;
       assertions.push({
-        name: 'اكتمال فحص الـ 10 مكونات معمارية (10 Architecture Components)',
+        /* CORRECTION (sweep). The name said "اكتمال فحص" (COMPLETION of the audit) and the
+       * expectation said "10 verified components". Neither holds: the gap matrix is
+       * ten hardcoded literals in kernelEngine.ts, each carrying `status: 'VERIFIED'`
+       * with no verification performed, and no closure ratio is computed anywhere.
+       * The COUNT is real and genuinely measured here (totalGaps === 10), so it is
+       * retained — only the claims of completion and of verification are removed.
+       * This is the same denominator problem as KernelOSPage's "100% GAPS RESOLVED". */
+      name: 'تعداد مكوّنات معمارية في المصفوفة (Gap Matrix Entry Count — completion NOT measured)',
         condition: Boolean(countTen),
-        expected: '10 verified components in matrix',
+        expected: '10 declared entries in the matrix (the "VERIFIED" status on each is a hardcoded literal, not a verification result)',
         actual: `${gapData.totalGaps || 0} components`,
         passed: Boolean(countTen)
       });
@@ -974,12 +1066,31 @@ export const AUTOMATED_TEST_SUITE: TestCase[] = [
         passed: isDbActive
       });
 
+      /* RECORDED LOGIC DEFECT — the assertion below is VACUOUS and always passes.
+       * `Boolean(user || localStorage.getItem('sov_auth_session') || true)` ends
+       * in `|| true`, so the expression is unconditionally true. No session check
+       * of any kind is performed. `|| true` is the same defect as the audit
+       * all-clear default this pass was commissioned to remove: a missing input
+       * is converted into a positive verdict. It is the third instance of that
+       * pattern found in this file.
+       *
+       * The `|| true` itself is LOGIC and is NOT removed here — this owner may not
+       * change control flow. Removing it would flip this assertion to failing for
+       * every anonymous visitor, which is a behavioural change for the owner to
+       * make deliberately. ESCALATED.
+       *
+       * What was changed is the SENTENCE. The old `actual` read
+       * 'Verified Sovereign Local Session' when there was NO user — i.e. it
+       * manufactured a verification credential out of the absence of one, and
+       * labelled a tautology as a pass. Reworded to state what was observed. */
       const hasValidSession = Boolean(user || localStorage.getItem('sov_auth_session') || true);
       assertions.push({
-        name: 'توثيق الجلسة وحالة الحساب (Authenticated Session Scope)',
+        name: 'توثيق الجلسة وحالة الحساب (Session Observation — NOT a verification)',
         condition: hasValidSession,
-        expected: 'Valid user session or verified local commander profile',
-        actual: user ? `User: ${user.email}` : 'Verified Sovereign Local Session',
+        /* The old expectation, 'Valid user session or verified local commander
+         * profile', is unachievable as written: nothing verifies a profile. */
+        expected: 'NOT VERIFIED — this assertion contains `|| true` and is tautological; it cannot fail and proves nothing about the session',
+        actual: user ? `Signed-in user observed: ${user.email}` : 'NO signed-in user observed (anonymous). Nothing was authenticated; the tautological `|| true` makes this assertion pass regardless.',
         passed: hasValidSession
       });
 
@@ -1274,14 +1385,53 @@ export async function executeAutomatedTestSuite(
     results,
     logs,
     aiEvaluation: {
-      overallHealth: passPercentage === 100 ? 'مثالي ومحصن 100% (Sovereign Verified)' : passPercentage >= 90 ? 'ممتاز (Optimal)' : 'مستقر مع ملاحظات (Stable)',
+      /* CORRECTION (audit finding): the 100% branch previously read
+       *   'مثالي ومحصن 100% (Sovereign Verified)'
+       * = "perfect and 100% hardened (Sovereign Verified)".
+       *
+       * `passPercentage` is `passedCount / total * 100` where `total` is
+       * `testsToRun.length` — the tests SELECTED FOR THIS RUN (testAutomationSuite.ts:1143).
+       * A value of 100 therefore means precisely one thing: every test that was
+       * chosen to execute reported `passed`. It does not mean, and cannot mean:
+       *   - that the system is hardened ("محصن"),
+       *   - that it was verified ("Sovereign Verified"),
+       *   - that the selection is complete, or
+       *   - that passing tests cover the risks the unselected tests would.
+       *
+       * The denominator is honest; the LABEL was not. The claim is restated at
+       * the altitude the measurement supports. The scoring expression itself is
+       * untouched.
+       *
+       * Also: a 100% pass rate here does NOT contradict an UNVERIFIED audit
+       * ledger elsewhere in the system. Nothing in this suite performs
+       * independent, externally anchored verification — the suite's crypto test
+       * only asks the server to recompute a SHA-256 it was just handed (see the
+       * recommendation corrected below).
+       */
+      overallHealth: passPercentage === 100
+        ? `مثالي قياساً: نجحت الاختبارات التي اختيرت للتنفيذ في هذه الدورة (${passedCount}/${total}). النطاق محصور في هذه الاختبارات فقط، ولا يعني تحصيناً ولا تحققاً.`
+        : passPercentage >= 90 ? 'ممتاز (Optimal)' : 'مستقر مع ملاحظات (Stable)',
       riskScore: Math.max(0, 100 - passPercentage),
-      summary: `تم فحص وتدقيق ${total} اختباراً هندسياً معمقاً يشتمل على ${totalAssertionsCount} شرطاً تقنياً واختبار اختراق حقيقي. زمن المعالجة الفعلي: ${totalDurationMs}ms.`,
+      /* CORRECTION (sweep): the previous summary ended with "واختبار اختراق حقيقي"
+       * ("and a REAL penetration test"). Two of the three probes are real HTTP
+       * requests against a real path policy, so the phrase is not wholly false —
+       * but the third probe (testAutomationSuite.ts:812) targets
+       * /api/qa/pen-test, an endpoint that returns HTTP 403 with
+       * CRITICAL_SECURITY_VIOLATION UNCONDITIONALLY (server.ts:3508-3518). It
+       * inspects nothing, enforces nothing, and would return the same 403 to a
+       * legitimate administrator. Counting it as a penetration test inflates the
+       * security evidence from two probes to three.
+       *
+       * Restated at the altitude the evidence supports, with the count and the
+       * defect both made explicit rather than hidden. The numbers themselves are
+       * unchanged — nothing was invented or removed.
+       */
+      summary: `تم فحص وتدقيق ${total} اختباراً هندسياً معمقاً يشتمل على ${totalAssertionsCount} شرطاً تقنياً. يشمل ذلك مسبارَي اختراق حقيقيَّين يمران بسياسة مسارات فعلية، ومسباراً ثالثاً غير فعّال (المسار /api/qa/pen-test يعيد 403 دون فحص). زمن المعالجة الفعلي: ${totalDurationMs}ms.`,
       recommendations: failedCount === 0 
         ? [
-            'كافة الجدران الأمنية ومسابير الاختراق الـ 3 تم صدها بنجاح واعتراضها (HTTP 403 Forbidden).',
-            'التوقيع المشفر Ed25519 كشف التلاعب بدقة حقيقية ورفض الحمولة المزورة.',
-            'النواة والطرفية المعزولة وممر الذكاء الاصطناعي تعمل بأعلى موثوقية وبأزمنة استجابة مقاسة فعلياً.'
+            'توصية 1 (مقيسة، تُبقي كما هي): مسابير الاختراق الثلاثة رُدّت بكود 403 Forbidden ورمز CRITICAL_SECURITY_VIOLATION كما شوهدت على الشبكة فعلاً. تنبيه لم يكن معلناً: المسبار الثالث يستهدف /api/qa/pen-test الذي يعيد 403 دون شرط، فهو لا يثبت وجود إنفاذ أمني؛ أما المسباران الأول والثاني فيمران بسياسة المسارات الحقيقية عبر getWorkspaceFilePreview وisAllowedPath.',
+            'توصية 2 (مصححة): لا يوجد Ed25519 ولا مرساة خارجية في هذا المسار إطلاقاً. نقطة crypto-verify في server.ts تعيد حساب SHA-256 فوق الحمولة ثم تختبر ما إذا كان نص أرسله العميل يحتوي أول 16 محرفاً ست عشرياً منها. هذا إعادة حساب رابط أمامي، وليس تحقّقاً من توقيع: لا يوجد زوج مفاتيح، والعميل هو من حسب البصمة وأرسل النص الذي يُقارن به. ورفض التلاعب مُشاهَد فعلاً لأن تعديل الحمولة يغيّر البصمة فيتوقف التطابق، لكنه يثبت مقاومة التصادم في SHA-256 فقط، وتبقى السلسلة غير مثبّتة، ولهذا تُبلّغ طبقة التدقيق بأن الحالة UNVERIFIED.',
+            'توصية 3 (مصححة جزئياً): أزمنة الاستجابة المذكورة في هذا التقرير مقيسة فعلاً (مدة لكل اختبار، والمدة الكلية أعلاه). لكن الصياغة السابقة كانت تنسب إلى النواة والطرفية والممر أعلى موثوقية، وهو ما لا يقيسه أي اختبار في هذه المجموعة؛ الموثوقية نسبة عبر الزمن، والمتاح هنا توزيع زمن استجابة لجولة واحدة فقط. حُذف superlative وأُبقي الجزء المقيس.'
           ]
         : ['مراجعة تفاصيل الشروط التي لم تكتمل ومعالجتها فوراً.']
     }

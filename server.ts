@@ -901,6 +901,17 @@ async function startServer() {
     const mcpMeasured = mcpProbe.provenance === 'MEASURED_BY_PROBER';
     const lspMeasured = lspProbe.provenance === 'MEASURED_BY_PROBER';
 
+    // Why a subsystem has no measurement. The transport already produced this
+    // vocabulary (`PROBER_UNREACHABLE`, `PROBER_TIMEOUT`, `PROBER_UNAUTHORIZED`,
+    // `PROBER_TOKEN_ABSENT`, …); it used to stop at the client boundary. Without it
+    // an instrument that is merely SLOW is indistinguishable from one that is
+    // ABSENT — the score falls either way and the operator cannot tell "the
+    // servers degraded" from "we lost the measuring device".
+    const mcpProbeReason = mcpProbe.unavailableReason;
+    const mcpProbeReasonText = mcpProbe.unavailableReasonText;
+    const lspProbeReason = lspProbe.unavailableReason;
+    const lspProbeReasonText = lspProbe.unavailableReasonText;
+
     // MCP server health. Host-measured entries replace the filesystem-derived ones
     // when the prober answered, because a handshake outranks the presence of a file.
     const mcpStatus = mcpMeasured
@@ -980,9 +991,21 @@ async function startServer() {
       // indistinguishable from "the check crashed", so the reason must be published.
       chainStatus?: string;
       chainVerifiedReason?: string | null;
+      /**
+       * Did the JSON-RPC round-trip itself succeed? This says NOTHING about
+       * whether the chain is sound — a tampered chain still answers over a
+       * perfectly healthy transport.
+       *
+       * It used to be published as `ok`, which is exactly backwards: `ok: true`
+       * sat next to `chainVerified: false` and `status: TAMPERED_REJECTED`, and
+       * any consumer reading `ok` concluded the system was fine. A field named
+       * `ok` must mean what a reader will take it to mean, or it will be believed
+       * over the more carefully-named booleans beside it.
+       */
+      transportOk?: boolean;
       error?: string;
     } = {
-      ok: false, toolCount: 0, chainVerified: false
+      ok: false, transportOk: false, toolCount: 0, chainVerified: false
     };
     try {
       const toolsResp = await globalSovereignMcpServer.handleJsonRpcMessage({
@@ -993,10 +1016,15 @@ async function startServer() {
         params: { name: 'sovereign_verify_chain', arguments: { chainKeyId: '360ea36c28e66d9d' } }
       });
       const chainResult = JSON.parse(chainResp.result?.content?.[0]?.text || '{}');
+      const chainVerified = chainResult.status === 'SEAL_INTACT_VERIFIED';
       mcpRpcSelfTest = {
-        ok: true,
+        // `ok` is the OVERALL verdict: the transport answered AND the chain
+        // verified. A failed chain can never carry `ok: true`, whatever the
+        // transport did.
+        ok: chainVerified,
+        transportOk: true,
         toolCount: toolsResp.result?.tools?.length || 0,
-        chainVerified: chainResult.status === 'SEAL_INTACT_VERIFIED',
+        chainVerified,
         chainStatus: chainResult.status,
         chainVerifiedReason: chainResult.reason ?? null
       };
@@ -1095,6 +1123,24 @@ async function startServer() {
           : (lspMeasured ? 'PROBER_RESPONDED_NO_TRANSPORT' : 'CONTAINER_FILESYSTEM_PROBE'),
         chainSource: mcpRpcSelfTest.chainVerified ? 'CHAIN_VERIFIED' : (mcpRpcSelfTest.chainStatus || 'UNVERIFIED'),
         anyMeasured,
+        // WHY a subsystem is unmeasured. This used to be discarded, which made a
+        // prober that is merely SLOW byte-for-byte indistinguishable from a prober
+        // that is ABSENT: both produced `CONTAINER_FILESYSTEM_PROBE` and both cost
+        // the same 30 points. The operator could see the score fall and had no way
+        // to tell "the servers degraded" from "we lost the instrument" — and those
+        // demand opposite responses.
+        //
+        // The vocabulary already existed in the client (`PROBER_UNREACHABLE`,
+        // `PROBER_TIMEOUT`, `PROBER_UNAUTHORIZED`, …) and was simply not carried
+        // out of the transport layer. It is carried now.
+        mcpUnavailableReason: mcpMeasured ? null : (mcpProbeReason || 'UNKNOWN'),
+        lspUnavailableReason: (lspMeasured && lspProbe.transportImplemented)
+          ? null
+          : (lspMeasured ? 'PROBER_RESPONDED_NO_TRANSPORT' : (lspProbeReason || 'UNKNOWN')),
+        unavailableReasonText: (mcpMeasured && lspMeasured)
+          ? null
+          : [mcpMeasured ? null : mcpProbeReasonText, lspMeasured ? null : lspProbeReasonText]
+              .filter(Boolean).join(' · ') || null,
         rationale: anyMeasured
           ? 'At least one subsystem was measured over a real transport; the score is computed from those measurements.'
           : 'No transport produced a measured verdict, so no score is published. A number here would assert a conclusion that no observation supports.'

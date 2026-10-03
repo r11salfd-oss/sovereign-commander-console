@@ -2,7 +2,28 @@
  * ============================================================================
  * SOVEREIGN SERVERS CENTER REGISTRY (E:\Servers-Center)
  * Standard: Model Context Protocol (MCP) + Language Server Protocol (LSP)
- * Unifies all 6 MCP Servers + LSP Servers into Sovereign Architecture
+ * Unifies the 7 declared MCP entries + LSP entries into Sovereign Architecture
+ *
+ * CORRECTION (audit finding): the line above previously read
+ *   'Unifies all 6 MCP Servers + LSP Servers into Sovereign Architecture'.
+ * The count was wrong: the canonical catalogue `EXPECTED_MCP_KEYS` has SEVEN
+ * entries (shell, chrome-devtools, github, syncfusion, context7, playwright,
+ * sovereign-commander) — verified against the live manifest at
+ * E:\Servers-Center\manifest.json, not assumed.
+ *
+ * Two further corrections of the same sentence, both load-bearing:
+ *   - "all 6" was a CATALOGUE count presented as a MEASURED count. Nothing is
+ *     merged from `EXPECTED_MCP_KEYS` into the emitted server list: `total` is
+ *     strictly the number of entries actually enumerated from a readable
+ *     manifest, and the catalogue is reported separately as `expectedCount`
+ *     (see the A9 note on `resolveMcpServers`). On an unreadable manifest
+ *     `total` is legitimately 0.
+ *   - "Unifies" claimed reachability. This registry spawns nothing and performs
+ *     no MCP/LSP handshake, so it unifies a DECLARED INVENTORY and nothing more.
+ *
+ * The word "Sovereign" was retained: it is the architecture's own name, used here
+ * as a proper noun for the design, not as a claim that the servers are sovereign,
+ * reachable or verified.
  * Chain Key ID: 360ea36c28e66d9d
  * ============================================================================
  *

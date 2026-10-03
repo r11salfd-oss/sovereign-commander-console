@@ -236,6 +236,15 @@ export interface ProberLimits {
 export interface McpProbeReport {
   readonly ok: true;
   readonly chainKeyId: string;
+  /**
+   * WHY this report is degraded, when it is. Same rationale as
+   * LspProbeReport.unavailableReason: the reason was already computed by the
+   * transport and then discarded, which made SLOW indistinguishable from ABSENT.
+   * 
+ull when the prober answered.
+   */
+  readonly unavailableReason: ProbeReasonCode | null;
+  readonly unavailableReasonText: string | null;
   readonly proberVersion: string;
   readonly hostPlatform: string;
   readonly nodeRuntime: string;
@@ -321,6 +330,20 @@ export interface LspProbeReport {
   readonly proberVersion: string;
   readonly generatedAt: string;
   readonly provenance: ReportProvenance;
+  /**
+   * WHY the report is degraded, when it is. This is the vocabulary that
+   * `getFixed` already computes (`PROBER_UNREACHABLE`, `PROBER_TIMEOUT`,
+   * `PROBER_UNAUTHORIZED`, `PROBER_TOKEN_ABSENT`, …) and that used to be
+   * discarded here.
+   *
+   * Discarding it made an instrument that was merely SLOW indistinguishable,
+   * byte for byte, from one that was ABSENT. Both cost the same points and both
+   * rendered as a filesystem probe, so an operator watching the score fall had no
+   * way to tell "the servers degraded" from "we lost the measuring device" —
+   * which demand opposite responses. `null` when the prober answered.
+   */
+  readonly unavailableReason: ProbeReasonCode | null;
+  readonly unavailableReasonText: string | null;
   /** Transport status for the whole sweep. */
   readonly transportImplemented: boolean;
   readonly summary: LspProbeSummary;
@@ -611,6 +634,8 @@ export function sanitizeMcpProbeReport(raw: unknown): McpProbeReport | null {
 
   return {
     ok: true,
+    unavailableReason: null,
+    unavailableReasonText: null,
     chainKeyId: asString(record['chainKeyId']) ?? HOST_PROBER_CHAIN_KEY_ID,
     proberVersion: asString(record['proberVersion']) ?? 'unknown',
     hostPlatform: asString(record['hostPlatform']) ?? 'unknown',
@@ -683,6 +708,8 @@ export function sanitizeLspProbeReport(raw: unknown): LspProbeReport | null {
 
   return {
     ok: true,
+    unavailableReason: null,
+    unavailableReasonText: null,
     chainKeyId: asString(record['chainKeyId']) ?? HOST_PROBER_CHAIN_KEY_ID,
     proberVersion: asString(record['proberVersion']) ?? 'unknown',
     generatedAt: asString(record['generatedAt']) ?? new Date(0).toISOString(),
@@ -759,6 +786,8 @@ export function buildUnverifiableMcpReport(
   return {
     ok: true,
     chainKeyId: HOST_PROBER_CHAIN_KEY_ID,
+    unavailableReason: null,
+    unavailableReasonText: null,
     proberVersion: 'unreachable',
     hostPlatform: 'unmeasured',
     nodeRuntime: 'unmeasured',
@@ -811,6 +840,8 @@ export function buildUnverifiableLspReport(
   return {
     ok: true,
     chainKeyId: HOST_PROBER_CHAIN_KEY_ID,
+    unavailableReason: null,
+    unavailableReasonText: null,
     proberVersion: 'unreachable',
     generatedAt,
     provenance: 'DEGRADED_UNVERIFIABLE',

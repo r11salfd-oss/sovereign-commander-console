@@ -171,11 +171,43 @@ export class SovereignKernel {
       handler: `sov_isr_vector_${e.vec.toString(16).padStart(2, '0')}`,
       dpl: e.vec === 128 ? 3 : 0, // 0x80 allows Ring 3 user syscalls
       present: true,
+      /* CORRECTION (sweep — NOT on the audit list). `invocationCount` was
+     * `Math.floor(Math.random() * 80) + 12`, i.e. a synthetic counter in the range
+     * 12–91 rendered by the UI as an interrupt-dispatch tally. A dispatch count is
+     * a pure counter: it is incremented by real hardware events and is exactly the
+     * kind of value that CAN be measured honestly here, which makes a fabricated
+     * one especially misleading — nothing was difficult to count.
+     * NOT changed: the generator is data flow. Documented and escalated instead. */
       invocationCount: Math.floor(Math.random() * 80) + 12
     }));
   }
 
   private initializeSyscalls() {
+    /* ────────────────────────────────────────────────────────────────────
+     * SEEDED SYSCALL TABLE — NOT CHANGED, DOCUMENTED PRECISELY
+     * ────────────────────────────────────────────────────────────────────
+     * Eight entries below are hardcoded literals, and each carries two numbers
+     * that are rendered by the UI as if they were observations:
+     *   - `totalCalls`      (e.g. 340)  — presented as a dispatch tally
+     *   - `lastLatencyUs`   (e.g. 2.1)  — presented as a measured microsecond latency
+     *
+     * Neither is observed. `totalCalls` is incremented only by `executeSyscall`,
+     * and the table is rendered by KernelOSPage.tsx BEFORE any syscall is invoked,
+     * so the count shown at first paint is a constant from this file. The latency
+     * figures are literals with no timer anywhere behind them — contrast with
+     * `executeSyscall`, which at least attempts a number and is now labelled
+     * SYNTHETIC in the UI because it is `Math.random()`.
+     *
+     * Both fields are `totalCalls` / `lastLatencyUs` on an interface declared in
+     * `src/os/types.ts`, which this file's owner may not edit, and replacing the
+     * values would be a data-flow change. So they are recorded here and escalated
+     * rather than silently rewritten.
+     *
+     * This is the same defect class as `invocationCount` in `initializeIdtEntries`
+     * and as the seeded `signedModules`: a plausible constant standing where a
+     * measurement belongs. It is the single largest remaining source of fabricated
+     * numbers in this file.
+     * ──────────────────────────────────────────────────────────────────── */
     this.syscallTable = [
       {
         number: 1,
@@ -200,7 +232,14 @@ export class SovereignKernel {
         name: 'sys_sov_crypto_sign',
         signature: 'int sys_sov_crypto_sign(const void* data, size_t len, uint8_t* out_sig)',
         requiredRing: 'RING_0_KERNEL',
-        description: 'Signs kernel module or payload using internal Ed25519/SHA-256 hardware enclave key.',
+        /* CORRECTION (sweep): was 'Signs kernel module or payload using internal
+     * Ed25519/SHA-256 hardware enclave key.' Every element of that sentence is
+     * unsupported: there is no Ed25519 key, no enclave, and no signing performed
+     * by this syscall — `sys_sov_crypto_sign` is a ROW IN A SEEDED TABLE. It is
+     * never dispatched, and the only signing code in the file (`signModule`)
+     * produces `Math.random()`.
+     * Restated to describe what the row is: a declared, never-executed syscall. */
+    description: 'DECLARED ONLY — never dispatched. No Ed25519 key, no hardware enclave and no signing occurs in this process.',
         totalCalls: 340,
         lastLatencyUs: 2.1
       },
@@ -471,7 +510,16 @@ export class SovereignKernel {
         targetRing: 'RING_0_KERNEL',
         authorAgent: 'sentinel-agent',
         sha256Hash: 'a718b57b98e1f0e2b34a62e0840dc65bf9d29c122ce2298c39d48b1115e47890',
-        signatureEd25519: 'ed25519:8f6a9e102bc45df...8820c4a',
+        // CORRECTION (sweep, not on the audit list — same defect as signModule).
+        // This entry is a HARD-CODED LITERAL, not the product of any measurement.
+        // The `ed25519:` prefix asserted a cryptographic signature over nothing;
+        // no Ed25519 operation exists anywhere in this codebase, so the prefix was
+        // the lie and it is replaced with a label that cannot be misread as one.
+        // NOT changed: the hex bodies (they resemble SHA-256 digests but no module
+        // source is retained to hash, so they cannot be digests) and
+        // `status: 'VERIFIED_ACTIVE'` (the union lives in src/os/types.ts, which
+        // this file's owner does not own). Both are escalated as residual risk.
+        signatureEd25519: 'unsigned-literal:8f6a9e102bc45df...8820c4a',
         status: 'VERIFIED_ACTIVE',
         loadAddress: '0xFFFFFFFFC0000000',
         sizeBytes: 65536
@@ -482,7 +530,8 @@ export class SovereignKernel {
         targetRing: 'RING_0_KERNEL',
         authorAgent: 'developer-agent',
         sha256Hash: 'd3b07384d113edec49eaa6238ad5ff00f71f1190bc85e7351dac812fe2919ef2',
-        signatureEd25519: 'ed25519:4a81ec009e5bc31...9911e2f',
+        // Same correction as the entry above: literal, unsigned, unverifiable.
+        signatureEd25519: 'unsigned-literal:4a81ec009e5bc31...9911e2f',
         status: 'VERIFIED_ACTIVE',
         loadAddress: '0xFFFFFFFFC0010000',
         sizeBytes: 131072
@@ -493,7 +542,8 @@ export class SovereignKernel {
         targetRing: 'RING_1_DRIVERS',
         authorAgent: 'interface-agent',
         sha256Hash: 'ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d',
-        signatureEd25519: 'ed25519:99a80b12fd56ae1...2211f90',
+        // Same correction as the entry above: literal, unsigned, unverifiable.
+        signatureEd25519: 'unsigned-literal:99a80b12fd56ae1...2211f90',
         status: 'VERIFIED_ACTIVE',
         loadAddress: '0xFFFFFFFFC0030000',
         sizeBytes: 49152
@@ -501,6 +551,40 @@ export class SovereignKernel {
     ];
   }
 
+  /* ────────────────────────────────────────────────────────────────────────
+   * GAP MATRIX — WHAT THESE TEN ENTRIES ARE
+   * ────────────────────────────────────────────────────────────────────────
+   * TEN TEN STRING LITERALS. Every field below is a hand-written string in this
+   * file. Nothing in this array is produced by, or checked against, a running
+   * kernel, because there is no kernel — this process is single-threaded
+   * Node.js. Specifically:
+   *
+   *   - `status: 'VERIFIED'` on all ten. No verification of any kind is
+   *     performed. The union `'COMPLETED' | 'IN_PROGRESS' | 'VERIFIED'` is
+   *     declared in `src/os/types.ts`, which this owner may not edit, and it has
+   *     no member meaning "unverified" — so the status could not be honestly
+   *     re-valued even if that were in scope. ESCALATED.
+   *   - `verifiedArtifact` originally named things that do not exist: an EFI
+   *     binary, CPU registers (CR3, EFER), ACPI tables at physical address
+   *     0xFEE00000, an installed IDT, MMU page tables, a preemptive scheduler,
+   *     a 1MB zero-copy buffer at 0xFFFFC90000000000 with a "0.4µs avg latency"
+   *     figure, a mounted VFS, and a SELinux/cgroups policy. None of it was ever
+   *     built, written, mounted, measured or loaded. These were the most
+   *     concrete fabrications in the repository — they cited specific register
+   *     values and physical addresses, which reads as empirical output.
+   *     ALL TEN have been restated to say that no artifact exists.
+   *   - `engineeringSolution` originally opened with construction verbs —
+   *     "Built", "Implemented", "Synthesized", "Created", "Engineered",
+   *     "Established", "Deployed" — describing work that did not happen. All
+   *     nine have been restated as "DESIGN RECORDED, NOT IMPLEMENTED" followed by
+   *     what was specified and an explicit statement of what is absent.
+   *
+   * WHAT WAS DELIBERATELY KEPT: the ten `title` and `gapDescription` strings are
+   * all TRUE. Those gaps are real — this application genuinely has no bootloader,
+   * no IDT, no MMU, no RTOS and no VFS. The matrix is an honest register of what
+   * is missing. It was only the record of CLOSURE that was false, and that is
+   * what has been corrected.
+   * ──────────────────────────────────────────────────────────────────────── */
   private initializeGapMatrix() {
     this.gapAuditItems = [
       {
@@ -508,100 +592,112 @@ export class SovereignKernel {
         layer: 'Layer 0',
         title: 'Custom Bootloader & 64-bit Long Mode Transition',
         gapDescription: 'Absence of native bootloader transitions from Real Mode 16-bit to Protected Mode 32-bit and 64-bit Long Mode.',
-        engineeringSolution: 'Built Sovereign Multi-Stage Bootloader engine with Stage 1 ASM entry, GDT setup, CR0/CR4/CR3 paging registers initialization, and 64-bit long mode jump.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. A multi-stage bootloader with GDT setup and CR0/CR4/CR3 paging initialisation was specified on paper. No assembly was written, no register was written, and no mode transition occurs.',
         assignedAgent: 'Architect Agent',
         status: 'VERIFIED',
-        verifiedArtifact: '/boot/efi/sovereign.efi • CR3=0x01000000 • Long Mode EFER=0xC0000080'
+        verifiedArtifact: 'NO ARTIFACT. No EFI binary was built and no CPU register was ever written: CR3 and EFER were not touched, and /boot/efi/sovereign.efi does not exist on this host. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-002',
         layer: 'Layer 0',
         title: 'ACPI 2.0+ Tables & Device Tree Blobs (DTB)',
         gapDescription: 'Lack of hardware discovery tables (RSDP, XSDT, FADT, MADT) and DTB memory mappings.',
-        engineeringSolution: 'Synthesized complete ACPI 2.0+ tables (RSDP, XSDT, FADT, MADT with 8 cores, DSDT) and hierarchical DTB tree for DDR5 ECC and PCIe storage discovery.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. ACPI 2.0+ table layouts and a DTB tree for DDR5 ECC and PCIe discovery were specified. Nothing was synthesised and no hardware was enumerated.',
         assignedAgent: 'Architect Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'ACPI Tables: RSDP, XSDT, FADT, MADT (8 Cores @ 0xFEE00000), DSDT'
+        verifiedArtifact: 'NO ARTIFACT. No ACPI table was synthesised and no device tree was built. Nothing was written to physical address 0xFEE00000, and no hardware discovery was performed. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-003',
         layer: 'Layer 1',
         title: '256-Vector Interrupt Descriptor Table (IDT)',
         gapDescription: 'Missing IDT handler table for CPU exceptions (#DE, #GP, #PF) and system call gates.',
-        engineeringSolution: 'Implemented full 256-entry IDT with hardware fault handlers (#PF Page Fault at vector 14, #GP at vector 13) and Ring 3 DPL=3 syscall trap at INT 0x80.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. A 256-entry IDT layout with fault handlers and a Ring 3 DPL=3 gate at INT 0x80 was specified. No handler code exists and no gate was installed.',
         assignedAgent: 'Architect Agent + Developer Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'IDT Table: 256 vectors active, DPL=0 for faults, DPL=3 for INT 0x80 Syscalls'
+        verifiedArtifact: 'NO ARTIFACT. No IDT was installed in a CPU and no interrupt was handled. The 256 entries above are JavaScript objects with a Math.random() invocationCount; vector 13/14 handlers are name strings, not code. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-004',
         layer: 'Layer 1',
         title: '4-Level MMU Paging & Ring 0 vs Ring 3 Hardware Isolation',
         gapDescription: 'No virtual-to-physical memory page translation (PML4 -> PDPT -> PD -> PT) and lack of hardware memory privilege bit protection.',
-        engineeringSolution: 'Created 4-Level Paging Engine with PML4 virtual memory resolver, User/Supervisor bit protection (Ring 0 Kernel vs Ring 3 User), and NX No-Execute security bit.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. A 4-level paging engine with U/S and NX protection was specified. No page tables are built and no privilege bit is set in any real memory.',
         assignedAgent: 'Developer Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'MMU Paging: 48-bit Virtual Address Resolver, Ring 0 (0xFFFF8...) vs Ring 3 (0x7FFE...)'
+        verifiedArtifact: 'NO ARTIFACT. No page tables exist and no NX bit was set. Ring 0 and Ring 3 are labels on objects in an array, not hardware privilege levels; there is no MMU involved. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-005',
         layer: 'Layer 1',
         title: 'Preemptive Real-Time Process Scheduler (RTOS)',
         gapDescription: 'Lack of deterministic process scheduler prioritizing the 8 Sovereign Council Agents.',
-        engineeringSolution: 'Engineered Preemptive Round-Robin + Priority RTOS Scheduler managing all 8 Council processes with dynamic quantum slices (10ms-35ms) and cgroups v2 limits.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. A preemptive round-robin + priority RTOS scheduler with dynamic quanta and cgroups v2 limits was specified. No scheduler runs; this process is single-threaded Node.js.',
         assignedAgent: 'Developer Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'Scheduler: 8 Council Processes, Ring 0 / Ring 1 / Ring 3 privilege separation'
+        verifiedArtifact: 'NO ARTIFACT. No scheduler preempts anything. There are no OS processes and no time quanta; the 8 Council members are strings. cgroups v2 limits were never configured. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-006',
         layer: 'Layer 2',
         title: 'Sovereign Syscall Table (Syscall Gates)',
         gapDescription: 'Lack of dedicated syscall ABI table; reliance on abstract web/socket layers.',
-        engineeringSolution: 'Established Sovereign Syscall Vector (sys_sov_dispatch, sys_sov_mem_isolate, sys_sov_crypto_sign, sys_sov_schedule_quantum, sys_sov_ipc_ring_write, etc.).',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. A syscall vector table was specified. The rows exist as data in this file; none is dispatched and no syscall ABI is exposed to any caller outside the process.',
         assignedAgent: 'Developer Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'Syscall Table: 8 Native Kernel Calls with privilege boundary enforcement'
+        verifiedArtifact: 'NO ARTIFACT. The 8 syscalls are table rows in a JavaScript array. None is dispatched to a kernel, and no privilege boundary is enforced - executeSyscall performs an Array.find and nothing else. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-007',
         layer: 'Layer 2',
         title: 'Zero-Copy Shared Memory Ring Buffer IPC',
         gapDescription: 'Inter-agent communication incurred serialization and latency overheads.',
-        engineeringSolution: 'Built high-throughput lock-free Zero-Copy Shared Memory Ring Buffer with atomic read/write pointers and sub-microsecond latency frames.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. A lock-free zero-copy shared ring buffer with atomic pointers was specified. No buffer is allocated and no shared memory is mapped between processes.',
         assignedAgent: 'Developer Agent + Gemini Interface Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'Zero-Copy Ring: 1MB Buffer @ 0xFFFFC90000000000, 0.4µs avg latency'
+        verifiedArtifact: 'NO ARTIFACT. No 1MB buffer was allocated and nothing was shared between processes. The address 0xFFFFC90000000000 was computed arithmetically, and the latency figure was never measured - the ring buffer stores Math.random() values under a checksum field. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-008',
         layer: 'Layer 3',
         title: 'Virtual File System (VFS) & Sovereign Rootfs Tree',
         gapDescription: 'Absence of standardized VFS directory hierarchy and block storage device drivers.',
-        engineeringSolution: 'Implemented Sovereign VFS with /sys/sov/ (agent settings), /dev/cmd/ (devices & IPC), /sov/vault/ (encrypted war chest), and NVMe block device nodes.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. A VFS hierarchy (/sys/sov, /dev/cmd, /sov/vault) with NVMe node support was specified. No filesystem is mounted and no block device driver runs.',
         assignedAgent: 'Architect Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'VFS Tree: /sys/sov, /dev/cmd, /sov/vault, /boot/efi with journaling'
+        verifiedArtifact: 'NO ARTIFACT. No filesystem was mounted and /sov/vault does not exist. These are path strings in an array; no block device driver ran and nothing was journalled. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-009',
         layer: 'Layer 4',
         title: 'Mandatory Access Control (MAC) & Hardware Sandboxing',
         gapDescription: 'Reliance on software-only UI restrictions rather than kernel-enforced MAC policy.',
-        engineeringSolution: 'Deployed SELinux-grade type enforcement rules and cgroups v2 container boundaries restricting raw block access to Sentinel Agent only.',
+        engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED. SELinux-grade type enforcement and cgroups v2 container boundaries were specified. No MAC policy is loaded and no cgroup is created; the only restriction in this process is the unprivileged node user in the container image.',
         assignedAgent: 'Sentinel Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'MAC Policy: SOV_SELINUX_ENFORCING, cgroups v2 cpu/memory quotas'
+        verifiedArtifact: 'NO ARTIFACT. No MAC policy was deployed. There is no SOV_SELINUX_ENFORCING rule set and no cgroups v2 quota anywhere in this process - the only boundary is the status field on an object. This entry records a DESIGN only.'
       },
       {
         id: 'GAP-010',
         layer: 'Layer 4',
         title: 'Cryptographic Kernel Module Signing & Verification',
         gapDescription: 'Modules loaded without cryptographic signature checks against malicious insertion.',
-        engineeringSolution: 'Implemented SHA-256 + Ed25519 signature validation engine verifying every kernel module (.ko) before allocating kernel address space.',
+        /* CORRECTION (sweep). Both strings below claimed a cryptographic signing and
+   * validation engine that verifies every kernel module before address-space
+   * allocation. That engine does not exist. What actually exists:
+   *   - `signModule` emits `Math.random()` under the field name `sha256Hash`
+   *     and `status: 'VERIFIED_ACTIVE'`, both hardcoded;
+   *   - nothing validates any module, and nothing gates any allocation;
+   *   - `verifiedArtifact` therefore described a verification that never ran, and
+   *     counted "3 active modules" against three hardcoded literals.
+   * These strings are DATA in the gap matrix this page renders, so they are
+   * user-facing claims, not comments. Restated to what is on record: a gap was
+   * enumerated and a design was written down. Nothing here asserts the design was
+   * built, and no closure is claimed. */
+    engineeringSolution: 'DESIGN RECORDED, NOT IMPLEMENTED: a SHA-256 + Ed25519 module validation design was written up. No such engine exists in this codebase — no key pair, no validator, and no allocation gate. `signModule` emits Math.random() and hardcodes status VERIFIED_ACTIVE.',
         assignedAgent: 'Sentinel Agent',
         status: 'VERIFIED',
-        verifiedArtifact: 'Kernel Module Signer: Ed25519 validation on 3 active modules'
+        verifiedArtifact: 'No verification artifact exists. 3 module RECORDS are held in memory, seeded as hardcoded literals; none was validated and none was loaded.'
       }
     ];
   }
@@ -643,7 +739,32 @@ export class SovereignKernel {
     };
   }
 
-  // --- Syscall Execution Engine ---
+  /* ────────────────────────────────────────────────────────────────────────
+   * SYSCALL EXECUTION ENGINE — WHAT ACTUALLY HAPPENS HERE
+   * ────────────────────────────────────────────────────────────────────────
+   * RECORDED DEFECTS (documented, NOT silently restructured — behaviour is
+   * out of scope for a prose pass):
+   *
+   * 1. `latency` (line below) is `Math.random() * 0.8 + 0.3`, returned as
+   *    `latencyUs`. Nothing is timed. The UI label in KernelOSPage.tsx was
+   *    corrected to say SYNTHETIC / NOT MEASURED so the figure cannot be read
+   *    as a profile of the microkernel.
+   *
+   * 2. `result` claims `Executed via CPU ${callerAgent}` and that the frame was
+   *    "routed to zero-copy memory ring". No CPU was selected, no memory was
+   *    touched, and no syscall was dispatched to a kernel — this function
+   *    resolves a number in a JavaScript array and pushes a record into another
+   *    JavaScript array. The string is a narration of work that did not occur.
+   *    It is left byte-for-byte because server.ts returns it verbatim in the
+   *    syscall API response and it is a wire-facing value; changing it is a
+   *    server-visible contract change. ESCALATED.
+   *
+   * 3. `frame.zeroCopyPointer` is synthesised from `totalCalls * 64`, not from
+   *    any real allocation, and is rendered as a memory address.
+   *
+   * A real fix for (2) and (3) means either performing the dispatch or removing
+   * the narration. Both are behaviour changes and are referred to the owner.
+   * ──────────────────────────────────────────────────────────────────────── */
   public executeSyscall(num: number, callerAgent: string, payload: any): { ok: boolean; result: string; latencyUs: number } {
     const sc = this.syscallTable.find(s => s.number === num);
     if (!sc) {
@@ -661,7 +782,14 @@ export class SovereignKernel {
       targetAgent: payload?.target || 'sov_kernel_core',
       syscallNum: num,
       payloadSize: JSON.stringify(payload || {}).length,
-      checksum: 'sha256:' + Math.random().toString(36).substring(2, 10),
+      /* CORRECTION (sweep): was `checksum: 'sha256:' + Math.random()...`.
+       * The `sha256:` prefix asserted a digest algorithm over a value that is
+       * `Math.random()` — no hash was computed. A prefixed fake is worse than an
+       * unprefixed one: a consumer reading the prefix alone concludes integrity
+       * was checked. Prefix replaced with an unambiguous label; the trailing
+       * `#length` digits stay so the field still renders in the same shape.
+       */
+      checksum: 'random-nocrypto:' + Math.random().toString(36).substring(2, 10),
       timestamp: new Date().toISOString(),
       zeroCopyPointer: `0xFFFFC90000${(sc.totalCalls * 64 % 65536).toString(16).padStart(6, '0')}`,
       processed: true
@@ -676,11 +804,47 @@ export class SovereignKernel {
     };
   }
 
-  // --- Module Signature Lab ---
+  /* ────────────────────────────────────────────────────────────────────────────
+   * MODULE SIGNATURE LAB — WHAT THIS ACTUALLY DOES
+   * ────────────────────────────────────────────────────────────────────────────
+   * THE AUDIT FINDING: `sig` previously began with the literal prefix
+   * `ed25519:`. That prefix was the lie — it asserted an Ed25519 signature over
+   * a value that is not a signature of anything.
+   *
+   * THE AUDIT DESCRIBED THE VALUE AS "a truncated SHA-256". That is generous,
+   * and the correction matters: the value is not even a SHA-256. `hash` below
+   * is built from `Math.random()` (see the next line). It is a random hex string.
+   * No digest is computed over `rawData`, so `sha256Hash` does not contain a
+   * SHA-256 of anything either.
+   *
+   * THE PREFIX WAS THEREFORE REPLACED, not reworded, with a label that cannot
+   * be misread as a cryptographic result: `unsigned-random:`. The digest-shaped
+   * truncation (16 hex + ellipsis + 8 hex) is kept purely so the string still
+   * renders with the same shape in the UI; it carries no verification meaning.
+   *
+   * WHAT WAS DELIBERATELY *NOT* CHANGED, AND WHY:
+   *   - `hash` is still `Math.random()`. Replacing it with a real
+   *     `createHash('sha256')` would be a real cryptographic fix, but it is
+   *     behaviour, not prose, and it is out of scope for this pass. It is the
+   *     single most important outstanding defect in this file.
+   *   - `sha256Hash: hash` keeps its name. The field is declared in
+   *     `src/os/types.ts` (line 110), which this file's owner does NOT own.
+   *     Renaming it would be a cross-file type change. The field name therefore
+   *     still overstates what the value is, and this is recorded as residual risk.
+   *   - `status: 'VERIFIED_ACTIVE'` was NOT changed to anything like
+   *     'UNVERIFIED' for the same reason: the union
+   *     `'VERIFIED_ACTIVE' | 'REVOKED' | 'QUARANTINED'` lives in
+   *     `src/os/types.ts` (line 112) and has no honest member for "unsigned".
+   *     Adding one is a type change to a file this pass may not touch.
+   *
+   * NET RESULT: `status: 'VERIFIED_ACTIVE'` on a module whose "signature" is
+   * `Math.random()` remains a FALSE CLAIM that is structurally unfixable from
+   * this file. It is escalated in the governance report rather than papered over.
+   * ──────────────────────────────────────────────────────────────────────────── */
   public signModule(name: string, authorAgent: string, ring: 'RING_0_KERNEL' | 'RING_1_DRIVERS' | 'RING_2_SERVICES' | 'RING_3_USER'): SignedKernelModule {
     const rawData = `${name}:${authorAgent}:${ring}:${Date.now()}`;
     const hash = 'a' + Math.random().toString(16).substring(2) + Math.random().toString(16).substring(2);
-    const sig = `ed25519:${hash.slice(0, 16)}...${hash.slice(-8)}#${rawData.length}`;
+    const sig = `unsigned-random:${hash.slice(0, 16)}...${hash.slice(-8)}#${rawData.length}`;
 
     const mod: SignedKernelModule = {
       name,

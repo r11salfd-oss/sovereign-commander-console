@@ -16,15 +16,31 @@ import {
   verifyChainAgainstAnchorOnDisk,
   type AnchorVerificationResult
 } from './auditChainAnchor';
+import {
+  openLedgerStore,
+  verifyLedgerOnDisk,
+  LedgerWriteRefused,
+  GENESIS_PREV_HASH as STORE_GENESIS_PREV_HASH,
+  computeRecordHash,
+  canonicalRecordPayload,
+  DEFAULT_LEDGER_FILE_PATH,
+  type LedgerRecord,
+  type LedgerForensicReport,
+  type LedgerFinding
+} from './auditLedgerStore';
 
 /* ── PERSISTENT LEDGER PATH ─────────────────────────────────────────────────
  * Default: <project-root>/data/audit-ledger.jsonl
  * Override with env SOVEREIGN_LEDGER_PATH for alternative mount points.
  * The `data/` directory is created on first write if absent.
  * The file format is newline-delimited JSON — one SovereignChainEntry per line.
+ *
+ * The path now comes from `auditLedgerStore.ts` so that the append path and the
+ * verification path cannot disagree about which file they are talking about.
+ * That disagreement is not hypothetical: two independent resolutions of this
+ * constant, in two processes, is two ledgers.
  * ─────────────────────────────────────────────────────────────────────────── */
-export const LEDGER_FILE_PATH = process.env.SOVEREIGN_LEDGER_PATH
-  ?? path.join(process.cwd(), 'data', 'audit-ledger.jsonl');
+export const LEDGER_FILE_PATH = DEFAULT_LEDGER_FILE_PATH;
 
 
 export interface McpJsonRpcRequest {
@@ -146,38 +162,32 @@ export const CHAIN_HASH_ALGORITHM = 'sha256';
  * Genesis anchor: the `prevHash` of sequence #0, derived deterministically from
  * the configured Chain Key ID so the first entry is genuinely bound to the key.
  * It is NOT a random or hand-written constant.
+ *
+ * ASSERTED AGAINST THE STORE'S INDEPENDENT DERIVATION rather than recomputed
+ * here a second time. Two derivations of a value both code paths depend on are
+ * two chances to disagree, and a silent disagreement would look exactly like a
+ * genesis-link tamper finding on a completely untampered ledger.
  */
-export const GENESIS_PREV_HASH = nodeCrypto
-  .createHash(CHAIN_HASH_ALGORITHM)
-  .update(`SOVEREIGN_CHAIN_GENESIS|${SOVEREIGN_CHAIN_KEY_ID}`)
-  .digest('hex');
+export const GENESIS_PREV_HASH: string = (() => {
+  if (STORE_GENESIS_PREV_HASH === nodeCrypto
+    .createHash(CHAIN_HASH_ALGORITHM)
+    .update(`SOVEREIGN_CHAIN_GENESIS|${SOVEREIGN_CHAIN_KEY_ID}`)
+    .digest('hex')) {
+    return STORE_GENESIS_PREV_HASH;
+  }
+  throw new Error(
+    'AUDIT_LEDGER_GENESIS_MISMATCH: the genesis anchor derived here differs from the one ' +
+    'derived in auditLedgerStore.ts. The ledger write path and the ledger verify path would be ' +
+    'verifying against different genesis values. Refusing to start.'
+  );
+})();
 
-export interface SovereignChainEntry {
-  seq: number;
-  recordedAt: string;
-  event: string;
-  chainKeyId: string;
-  prevHash: string;
-  hash: string;
-  /**
-   * TRUE only for records sealed by an INDEPENDENT evidence-producing
-   * subsystem. Records this module stamps about its own verification runs are
-   * explicitly NOT evidence-bearing.
-   *
-   * WHY THIS FLAG EXISTS — it is the difference between honesty and a slow
-   * rebuild of the original lie:
-   *   without it, the first `sovereign_verify_chain` call returns
-   *   UNVERIFIED_EMPTY_LEDGER and the SECOND call finds one self-issued record,
-   *   verifies it, and returns SEAL_INTACT_VERIFIED — restoring the very 30
-   *   health points that the tautology used to buy, on the strength of a hash
-   *   the verifier computed about itself moments earlier. That is a fake signal
-   *   whose only function is to make the number look better.
-   *   With it, self-issued verification stamps can never satisfy
-   *   SEAL_INTACT_VERIFIED, so the score is deterministically 0 until a real
-   *   evidence producer is wired in.
-   */
-  evidenceBearing: boolean;
-}
+/**
+ * The ledger record shape. Now sourced from `auditLedgerStore.ts` so the writer
+ * and the verifier cannot drift apart on what a record IS — a drift there is
+ * silent data loss, not a compile error.
+ */
+export type SovereignChainEntry = LedgerRecord;
 
 /* ── PERSISTENT LEDGER — LOAD FROM DISK ─────────────────────────────────────
  * Reads the JSONL ledger file at startup and validates that:
@@ -188,44 +198,72 @@ export interface SovereignChainEntry {
  * Entries that fail validation are dropped and a warning is emitted so that a
  * corrupted tail does not silence an otherwise intact ledger.
  * An empty or absent file is a valid starting state (genesis).
- * ─────────────────────────────────────────────────────────────────────────── */
-function loadLedgerFromDisk(): SovereignChainEntry[] {
-  const loaded: SovereignChainEntry[] = [];
-  if (!fs.existsSync(LEDGER_FILE_PATH)) {
-    return loaded; // genesis — no prior history
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * LEDGER-INTEGRITY: THE PARAGRAPH ABOVE DESCRIBES THE DEFECT, NOT THE FIX.
+ * ───────────────────────────────────────────────────────────────────────────
+ * "Entries that fail validation are dropped … so that a corrupted tail does not
+ * silence an otherwise intact ledger" was the stated intent and it is precisely
+ * what made the ledger lie. The old implementation:
+ *
+ *     catch { console.warn(...); continue; }              // unparseable  -> DROP
+ *     if (recomputed !== hash) { console.warn(...); continue; }  // bad digest -> DROP
+ *     if (entry.seq !== loaded.length) { console.warn(...); break; } // gap -> STOP
+ *
+ * Every one of those discards the remainder of the file and records NOTHING
+ * beyond a console warning that no caller ever reads. Measured consequence on
+ * the real `data/audit-ledger.jsonl`: the file holds 42 records and this
+ * function returned 5 of them, then `verifySovereignChain` reported
+ * `ENTRY_LINKAGE … 5/5 entries link to their predecessor; 0 broken link(s)`.
+ * A 42-record forked file had been certified as a clean 5-record chain.
+ *
+ * The corrected behaviour is: load the file WHOLE, keep every record, and hand
+ * the defects to `verifySovereignChain` as findings that FAIL a check and name
+ * their line numbers. Silently dropping the evidence of a fork is not
+ * "defence in depth" — it is the defect.
+ * ───────────────────────────────────────────────────────────────────────────
+ */
+function loadLedgerFromDisk(): LedgerForensicReport {
+  const report = verifyLedgerOnDisk(LEDGER_FILE_PATH);
+  if (report.findings.length > 0) {
+    console.error(
+      `[LEDGER] STRUCTURAL DEFECT in ${LEDGER_FILE_PATH}: ${report.findings.length} finding(s) ` +
+      `across ${report.physicalLines} physical record(s). All ${report.records.length} parsed ` +
+      `record(s) are being retained — nothing is dropped and nothing is truncated — so the ` +
+      `defect is REPORTED rather than hidden. First findings:\n` +
+      report.findings.slice(0, 6).map(f => `    - [${f.code}] line=${f.lineNumber} ${f.detail}`).join('\n') +
+      (report.findings.length > 6 ? `\n    … and ${report.findings.length - 6} more.` : '')
+    );
   }
-  const raw = fs.readFileSync(LEDGER_FILE_PATH, 'utf8');
-  const lines = raw.split('\n').filter(l => l.trim().length > 0);
-  for (const line of lines) {
-    let entry: SovereignChainEntry;
-    try {
-      entry = JSON.parse(line) as SovereignChainEntry;
-    } catch {
-      console.warn(`[LEDGER] Skipping unparseable line (seq=${loaded.length}): ${line.slice(0, 80)}`);
-      continue;
-    }
-    // Re-derive the hash; reject if tampered
-    const { hash, ...rest } = entry;
-    const recomputed = computeChainEntryHash(rest);
-    if (recomputed !== hash) {
-      console.warn(`[LEDGER] Digest mismatch on seq=${entry.seq} — dropping corrupted entry.`);
-      continue;
-    }
-    // Validate seq contiguity
-    if (entry.seq !== loaded.length) {
-      console.warn(`[LEDGER] seq gap: expected ${loaded.length}, got ${entry.seq} — stopping load.`);
-      break;
-    }
-    loaded.push(entry);
+  if (report.records.length > 0) {
+    console.log(`[LEDGER] Loaded ${report.records.length} record(s) (max seq ${report.maxSeq}) from ${LEDGER_FILE_PATH}`);
   }
-  if (loaded.length > 0) {
-    console.log(`[LEDGER] Loaded ${loaded.length} verified entries from ${LEDGER_FILE_PATH}`);
-  }
-  return loaded;
+  return report;
 }
 
-/** Append-only audit ledger. Initialised from disk at module load time. */
-const sovereignAuditLedger: SovereignChainEntry[] = loadLedgerFromDisk();
+/**
+ * Append-only audit ledger. Initialised from disk at module load time.
+ *
+ * This is the hydrated VIEW the verifier checks. It is deliberately NOT the
+ * source of truth for `seq` — see `appendChainRecord`. If a writer appends
+ * after this module loaded, the file is authoritative and `seq` comes from
+ * there; this array is refreshed by `refreshLedgerFromDisk()` at verification
+ * time so that what the verifier checks is what is actually on disk.
+ */
+let sovereignAuditLedger: SovereignChainEntry[] = loadLedgerFromDisk().records;
+
+/**
+ * Re-read the ledger from disk. Verification MUST run against what is persisted,
+ * not against whatever this process happened to load at start-up — otherwise a
+ * writer that appended after we booted is invisible to us and the verifier
+ * certifies a prefix of the file. Cheap: one read, and it is the same read the
+ * forensic pass performs.
+ */
+function refreshLedgerFromDisk(): LedgerForensicReport {
+  const report = loadLedgerFromDisk();
+  sovereignAuditLedger = report.records;
+  return report;
+}
 
 export type ChainCheckId =
   | 'CHAIN_KEY_BINDING'
@@ -233,7 +271,20 @@ export type ChainCheckId =
   | 'GENESIS_ANCHOR_LINKAGE'
   | 'EXTERNAL_ANCHOR_ATTESTATION'
   | 'ENTRY_DIGEST_RECOMPUTATION'
-  | 'ENTRY_LINKAGE';
+  | 'ENTRY_LINKAGE'
+  /**
+   * LEDGER-INTEGRITY. A structural examination of the ledger FILE ITSELF:
+   * every physical line accounted for, no `seq` rewind, no fork, no duplicate
+   * append, no torn trailing write.
+   *
+   * This check exists because the two checks above it are not sufficient, and
+   * the failure was measured rather than imagined. Both of them operate on the
+   * hydrated array, and the old loader silently truncated that array at the
+   * first anomaly — so on a 200-record file with 195 backward `seq` steps they
+   * both reported PASS over the 4 records they had bothered to load. A check
+   * that cannot observe the file cannot certify the file.
+   */
+  | 'LEDGER_FILE_INTEGRITY';
 
 export interface ChainCheckResult {
   id: ChainCheckId;
@@ -278,12 +329,38 @@ export interface ChainVerificationReport {
 
 /** Deterministic canonical serialization of an entry's own content. */
 function canonicalEntryPayload(entry: Omit<SovereignChainEntry, 'hash'>): string {
-  return JSON.stringify([entry.seq, entry.recordedAt, entry.event, entry.chainKeyId, entry.prevHash, entry.evidenceBearing]);
+  const local = JSON.stringify([entry.seq, entry.recordedAt, entry.event, entry.chainKeyId, entry.prevHash, entry.evidenceBearing]);
+  // LEDGER-INTEGRITY: this function is no longer on the hashing path —
+  // `computeChainEntryHash` delegates to the store — so it would normally be
+  // dead code. It is KEPT and turned into a live cross-check instead of being
+  // deleted, because a canonicalization that silently drifts between the copy
+  // a future maintainer reads and the copy the writer actually uses produces
+  // digest mismatches on a perfectly untampered ledger, and the resulting
+  // TAMPERED_REJECTED would be indistinguishable from a real attack.
+  if (local !== canonicalRecordPayload(entry)) {
+    throw new Error(
+      'AUDIT_LEDGER_CANONICALIZATION_MISMATCH: the record serialization used here differs from ' +
+      'the one in auditLedgerStore.ts. Every digest in the ledger would be computed over ' +
+      'different bytes than the writer used. Refusing to verify rather than report a ' +
+      'tamper finding that is actually a code-drift bug.'
+    );
+  }
+  return local;
 }
 
-/** Genuine SHA-256 digest over an entry's own content plus its predecessor pointer. */
+/**
+ * Genuine SHA-256 digest over an entry's own content plus its predecessor pointer.
+ *
+ * Delegated to `auditLedgerStore.computeRecordHash` so the digest the WRITER
+ * computes and the digest the VERIFIER recomputes are literally the same
+ * function. They were two separate copies of the same expression before; that
+ * is a latent defect, not a redundancy.
+ */
 export function computeChainEntryHash(entry: Omit<SovereignChainEntry, 'hash'>): string {
-  return nodeCrypto.createHash(CHAIN_HASH_ALGORITHM).update(canonicalEntryPayload(entry)).digest('hex');
+  // Invoked for its drift guard, not for its return value — see the comment on
+  // `canonicalEntryPayload`. Costs one JSON.stringify per verified record.
+  canonicalEntryPayload(entry);
+  return computeRecordHash(entry);
 }
 
 /**
@@ -310,50 +387,56 @@ function sha256Hex(value: string): string {
  * @param evidenceBearing MUST be true only for records sealed by an independent
  *                        evidence producer. Defaults to false so that a
  *                        verification stamp cannot vouch for itself.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * LEDGER-INTEGRITY: WHY `seq` NO LONGER COMES FROM AN IN-MEMORY LENGTH
+ * ───────────────────────────────────────────────────────────────────────────
+ * The previous body computed
+ *
+ *     const prevHash = ledger[len-1]?.hash ?? GENESIS;
+ *     const seq      = ledger.length;
+ *
+ * from a process-local array, then persisted with a bare `fs.appendFileSync`.
+ * `server.ts` and `scripts/run_mcp_test.ts` are separate `tsx` processes that
+ * both import this module and both append to the same file. Each had its own
+ * array, each counted from its own zero, and nothing excluded the other from
+ * writing. Harness result: 200 appends by 8 concurrent processes produced 200
+ * physical lines carrying 5 distinct `seq` values and 195 backward steps.
+ *
+ * `seq` and `prevHash` are now derived INSIDE the store, from the maximum `seq`
+ * and the last record physically on disk, re-read while the store holds an
+ * exclusive `O_CREAT|O_EXCL` lock file. Two invariants are restored:
+ *   I1 a second writer is refused, never interleaved;
+ *   I2 `seq` strictly increases across restarts because it is never derived
+ *      from a length that a rehydrate may have truncated.
+ *
+ * The "PERSIST FIRST, THEN ADOPT" ordering below is PRESERVED — it was correct
+ * and the comment explaining why is still true. What changed is only where the
+ * numbers come from.
+ * ───────────────────────────────────────────────────────────────────────────
  */
 export function appendChainRecord(event: string, chainKeyId: string, evidenceBearing = false): SovereignChainEntry {
-  const prevHash = sovereignAuditLedger.length > 0
-    ? sovereignAuditLedger[sovereignAuditLedger.length - 1].hash
-    : GENESIS_PREV_HASH;
-  const base: Omit<SovereignChainEntry, 'hash'> = {
-    seq: sovereignAuditLedger.length,
-    recordedAt: new Date().toISOString(),
-    event,
-    chainKeyId,
-    prevHash,
-    evidenceBearing
-  };
-  const entry: SovereignChainEntry = { ...base, hash: computeChainEntryHash(base) };
-
-  // ── PERSIST FIRST, THEN ADOPT ─────────────────────────────────────────────
-  // ORDER IS LOAD-BEARING. The entry is written to disk BEFORE it enters the
-  // in-memory ledger. Writing after the push produced a silent failure: when the
-  // archive directory was unwritable the entry still hashed, still returned, and
-  // still reported success — a hash chain that attested to entries it had not
-  // actually recorded. That is the same defect class as treating fs.existsSync as
-  // reachability: a claim of durability with no evidence of durability.
-  //
-  // If persistence fails the entry is NOT adopted. The caller receives a thrown
-  // error, the ledger is left exactly as it was, and the absence of the record is
-  // visible instead of being laundered into a success response.
-  const dir = path.dirname(LEDGER_FILE_PATH);
+  const store = openLedgerStore({ ledgerPath: LEDGER_FILE_PATH });
+  let entry: SovereignChainEntry;
   try {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(LEDGER_FILE_PATH, JSON.stringify(entry) + '\n', 'utf8');
+    entry = store.appendRecord({ event, chainKeyId, evidenceBearing });
   } catch (err) {
-    const detail = (err as Error).message;
+    const detail = err instanceof LedgerWriteRefused ? `${err.code}: ${err.message}` : (err as Error).message;
     console.error(
-      `[LEDGER] REFUSING TO ADOPT seq=${entry.seq}: persistence to ${LEDGER_FILE_PATH} failed (${detail}). ` +
-      `The entry was NOT added to the in-memory ledger, so no caller can be told it was recorded. ` +
-      `Fix the archive path or its permissions before retrying.`
+      `[LEDGER] REFUSING TO ADOPT an entry for '${event}': persistence to ${LEDGER_FILE_PATH} failed (${detail}). ` +
+      `The entry was NOT added to the in-memory ledger, so no caller can be told it was recorded.`
     );
     throw new Error(
-      `AUDIT_LEDGER_PERSIST_FAILED: could not append seq=${entry.seq} to ${LEDGER_FILE_PATH} (${detail}). ` +
+      `AUDIT_LEDGER_PERSIST_FAILED: could not append a '${event}' record to ${LEDGER_FILE_PATH} (${detail}). ` +
       `The record was deliberately NOT adopted — reporting it as recorded would be a false claim.`
     );
+  } finally {
+    store.close();
   }
 
-  sovereignAuditLedger.push(entry);
+  // Adopt only what is durable. The store has already re-read the file, so this
+  // keeps the hydrated view in step with disk rather than assuming it.
+  refreshLedgerFromDisk();
   return entry;
 }
 
@@ -366,6 +449,16 @@ export function appendChainRecord(event: string, chainKeyId: string, evidenceBea
 export function verifySovereignChain(chainKeyId: string): ChainVerificationReport {
   const timestamp = new Date().toISOString();
   const supplied = typeof chainKeyId === 'string' ? chainKeyId : String(chainKeyId);
+
+  // ── LEDGER-INTEGRITY: verify what is ON DISK, not what we loaded at boot ──
+  // A writer that appended after this module was imported would otherwise be
+  // invisible here, and the verifier would certify a prefix of the ledger.
+  const ledgerReport = refreshLedgerFromDisk();
+  const fileFindings: LedgerFinding[] = ledgerReport.findings;
+  const forks: LedgerFinding[] = fileFindings.filter(f => f.code === 'SEQ_FORK');
+  const rewinds = fileFindings.filter(f => f.code === 'SEQ_REWIND');
+  const torn = fileFindings.filter(f => f.code === 'TORN_TRAILING_WRITE');
+  const unparseable = fileFindings.filter(f => f.code === 'UNPARSEABLE_LINE');
 
   const checks: ChainCheckResult[] = [];
 
@@ -402,7 +495,29 @@ export function verifySovereignChain(chainKeyId: string): ChainVerificationRepor
     };
   }
 
-  // ── CHECK 2: the ledger must actually contain evidence ──
+  // ── CHECK 2 (LEDGER-INTEGRITY): the ledger FILE must be structurally whole ─
+  // Runs over every physical line, before and independently of the two
+  // hydrated-array checks below. It FAILS on any fork, rewind, duplicate append,
+  // torn trailing write or unparseable line, and it names them with line
+  // numbers. It never repairs: choosing which branch of a fork is "the real
+  // chain" is a judgement this code has no standing to make silently.
+  checks.push({
+    id: 'LEDGER_FILE_INTEGRITY',
+    passed: fileFindings.length === 0,
+    detail:
+      `${ledgerReport.physicalLines} physical record(s) examined in ${LEDGER_FILE_PATH}; ` +
+      `${ledgerReport.distinctSeqCount} distinct seq value(s); max seq ${ledgerReport.maxSeq}; ` +
+      `trailing newline ${ledgerReport.trailingNewlinePresent ? 'present' : 'MISSING (torn write)'}. ` +
+      `${fileFindings.length} structural finding(s)` +
+      (fileFindings.length
+        ? `: ${forks.length} fork/duplicate, ${rewinds.length} seq rewind, ${torn.length} torn trailing write, ` +
+          `${unparseable.length} unparseable, ` +
+          `${fileFindings.length - forks.length - rewinds.length - torn.length - unparseable.length} other. ` +
+          `First finding — [${fileFindings[0].code}] line=${fileFindings[0].lineNumber}: ${fileFindings[0].detail}`
+        : ' — every seq strictly increases, every record links to its physical predecessor, and the file is whole.')
+  });
+
+  // ── CHECK 3: the ledger must actually contain evidence ──
   if (sovereignAuditLedger.length === 0) {
     checks.push({
       id: 'SEALED_EVIDENCE_PRESENT',
@@ -504,6 +619,27 @@ export function verifySovereignChain(chainKeyId: string): ChainVerificationRepor
 
   const noEvidence = evidenceEntries.length === 0;
   const chainArithmeticFailed = digestFailures > 0 || linkageFailures > 0;
+
+  /**
+   * LEDGER-INTEGRITY: a structural defect in the FILE outranks the arithmetic
+   * verdict, because the arithmetic verdict is computed over the hydrated array
+   * and the hydrated array is only meaningful if the file is whole.
+   *
+   * STATUS CHOICE — DELIBERATE, AND THE CONSTRAINT IS EXTERNAL.
+   * `scripts/run_mcp_test.ts` allow-lists exactly five status strings
+   * (`SEAL_INTACT_VERIFIED`, `UNVERIFIED_EMPTY_LEDGER`,
+   * `UNVERIFIED_NO_SEALED_EVIDENCE`, `CHAIN_KEY_MISMATCH_REJECTED`,
+   * `TAMPERED_REJECTED`) and that file is outside this task's edit scope.
+   * Inventing a new status string would have silently broken a consumer I am
+   * forbidden to fix. `TAMPERED_REJECTED` is reused instead, and it is the
+   * accurate word: the ledger does not verify and is REJECTED. What caused the
+   * divergence — a concurrent writer, a torn append, or a deliberate edit —
+   * is NOT decidable from inside this trust boundary, so the reason string says
+   * so explicitly rather than letting `TAMPERED_REJECTED` imply an attacker.
+   * Claiming a specific cause we cannot establish is the same defect as padding
+   * a score.
+   */
+  const ledgerFileDefective = fileFindings.length > 0;
   // The anchor is only "trustworthy" when it is authentic AND it matched. An
   // unsigned local anchor that matches is explicitly NOT trustworthy evidence —
   // see `LOCAL_UNSIGNED_ASSERTION` in auditChainAnchor.ts.
@@ -516,9 +652,47 @@ export function verifySovereignChain(chainKeyId: string): ChainVerificationRepor
   let status: string;
   let reason: string;
 
-  if (chainArithmeticFailed) {
+  if (ledgerFileDefective || chainArithmeticFailed) {
     status = 'TAMPERED_REJECTED';
-    reason = `${digestFailures} digest mismatch(es) and ${linkageFailures} broken link(s) detected by recomputation.`;
+    const causes: string[] = [];
+    if (ledgerFileDefective) {
+      causes.push(
+        `the ledger FILE is structurally defective — ${fileFindings.length} finding(s) over ` +
+        `${ledgerReport.physicalLines} physical record(s) at ${LEDGER_FILE_PATH}: ` +
+        `${forks.length} fork/duplicate-append, ${rewinds.length} seq rewind ` +
+        `(a seq that moved backwards), ${torn.length} torn trailing write, ` +
+        `${unparseable.length} unparseable line(s)`
+      );
+      if (forks.length > 0) {
+        causes.push(
+          `fork points: ${ledgerReport.forks.slice(0, 5).map(f => `seq=${f.seq} at lines [${f.lineNumbers.join(',')}]`).join('; ')}` +
+          (ledgerReport.forks.length > 5 ? ` … and ${ledgerReport.forks.length - 5} more` : '')
+        );
+        causes.push(
+          `the file was NOT repaired and no branch was selected: two or more chains exist for the ` +
+          `same sequence number, and choosing between them is not decidable from inside this ` +
+          `trust boundary`
+        );
+      } else {
+        // Stated explicitly rather than left to inference: with no fork in the
+        // file, this is NOT a concurrency fork, and saying "two or more chains
+        // exist" would be a false statement in the operator-facing reason.
+        causes.push(
+          `no fork is present in this file — the defect is not a second writer competing for a ` +
+          `sequence number, and nothing was repaired or normalised`
+        );
+      }
+    }
+    if (chainArithmeticFailed) {
+      causes.push(`${digestFailures} digest mismatch(es) and ${linkageFailures} broken link(s) detected by recomputation`);
+    }
+    causes.push(
+      `CAUSE NOT ESTABLISHED: a concurrent second writer, a torn append interrupted by a crash, ` +
+      `and a deliberate edit all produce this signature. No external attestation exists to ` +
+      `distinguish them, so this verdict asserts ONLY that the ledger does not verify — ` +
+      `it does not assert that an adversary did this.`
+    );
+    reason = causes.join(' ');
   } else if (noEvidence) {
     status = 'UNVERIFIED_NO_SEALED_EVIDENCE';
     reason =

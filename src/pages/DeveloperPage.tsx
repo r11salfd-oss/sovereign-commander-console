@@ -298,7 +298,36 @@ export default function DeveloperPage() {
     { url: '/api/brainmap', method: 'GET', desc: 'Inspect live cognitive matrix model mappings' },
     { url: '/api/mcp/status', method: 'GET', desc: 'Check Model Context Protocol (MCP) server daemon status' },
     { url: '/api/mcp/servers', method: 'GET', desc: 'Inspect full catalog of 6 MCP servers + Sovereign Commander' },
-    { url: '/api/lsp/servers', method: 'GET', desc: 'Inspect all 6 Language Server Protocol (LSP) engines' },
+    /* CORRECTION (audit finding): the previous description read
+       * 'Inspect all 6 Language Server Protocol (LSP) engines'.
+       *
+       * Two claims, both false:
+       *
+       * (a) "6 ... engines" — six is the DECLARED inventory size, verified against
+       *     the live manifest at E:\Servers-Center\manifest.json, which lists
+       *     exactly six `lsp` entries. That part is arithmetically right but is an
+       *     inventory count, not a fleet of running engines. An "engine" implies a
+       *     process; nothing here spawns or reaches one.
+       *
+       * (b) the grouping itself — the endpoint publishes six entries but does NOT
+       *     treat them as six language servers, and this description implied they
+       *     were. Per the entries' own declared paths, only `bash`
+       *     (bash-language-server) and `yaml` (yaml-language-server) are genuine
+       *     LSP endpoints; `typescript` resolves to `tsserverlibrary.js`, a
+       *     compiler daemon that does not speak LSP; `eslint` resolves to the
+       *     eslint CLI, a linter speaking its own protocol; `dotnet` is a bare SDK
+       *     with no entry at all (omnisharp and csharp-ls are both absent from
+       *     PATH on this host — verified, not assumed); and `pyright` declares only
+       *     a pip `source` with no entry path.
+       *
+       * The registry already computes this split per entry and publishes it
+       * (`category`, `scoreable`, `categoryCounts`, `measurableTotal`), so the
+       * description now points at that measured data instead of restating a
+       * uniform claim it cannot support. The declared count of 6 is RETAINED
+       * because it is real and verified; only the engine/status framing is
+       * corrected.
+       */
+    { url: '/api/lsp/servers', method: 'GET', desc: 'Inspect the 6 DECLARED Language Server Protocol (LSP) inventory entries. 3 of them (bash, yaml, pyright) answer a real Content-Length handshake and are measured ONLINE; the other 3 are a compiler daemon, a linter CLI and a bare SDK with no language server installed, and are reported UNVERIFIABLE rather than counted as servers. The counts come from /api/agents/framework (lsp.ready / lsp.measurableTotal), not from this page.' },
     { url: '/api/servers-center/overview', method: 'GET', desc: 'Query unified Servers Center device hub — resolved root + FILE_EXISTENCE_ONLY measurement envelope (not a reachability claim)' },
     { url: '/api/hitl/audit/verify', method: 'GET', desc: 'Cryptographic ledger hash validation probe' },
     { url: '/api/agents/metrics', method: 'GET', desc: 'Real 24h deterministic agent operations telemetry' }

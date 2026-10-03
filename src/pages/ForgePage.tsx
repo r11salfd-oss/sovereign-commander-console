@@ -121,7 +121,7 @@ export default function ForgePage() {
         agent: 'forge-agent',
         type: 'modify_file',
         summary: `Forge Synthesis: ${targetPath}`,
-        reason: `Synthesized code for ${targetPath} via ${synthesisMeta?.model || model} (LSP: ${lspResult?.passed ? 'PASSED' : 'UNCHECKED'})`,
+        reason: `Synthesized code for ${targetPath} via ${synthesisMeta?.model || model} (static in-process check: ${lspResult?.passed ? 'PASSED' : 'UNCHECKED'}) — no LSP handshake was performed`,
         createdAt: now.toISOString(),
         expiresAt: expires.toISOString(),
         payload: {
@@ -374,8 +374,22 @@ export default function ForgePage() {
                       ) : (
                         <AlertTriangle className="w-4 h-4 text-rose-400" />
                       )}
-                      <span>LSP Status: {lspResult.passed ? 'Zero Syntax Errors (PASS)' : `Errors Detected (${lspResult.errorsCount})`}</span>
-                    </div>
+                      <span>Static Check Status: {lspResult.passed ? 'Zero Syntax Errors (PASS)' : `Errors Detected (${lspResult.errorsCount})`}</span>
+                      </div>
+                      {/* CORRECTION (audit finding, sweep follow-up): the heading above
+                          said "LSP Status", which named a protocol that is never spoken
+                          on this path — for TypeScript it is an in-process
+                          `ts.transpileModule()` call (server.ts:2784), not a language
+                          server. Renamed to "Static Check Status" so the heading matches
+                          what actually ran.
+                          The word "PASS" was KEPT deliberately: it is accurate that the
+                          check reported no errors, and removing it would destroy real
+                          signal. What is called out instead is the vacuous-pass case —
+                          server.ts:2874 returns a pass for languages with no validator at
+                          all ('the pass is vacuous') — so a green PASS is not by itself
+                          evidence that anything was examined.
+                          `lspResult.lspServer` below is the server's own authoritative
+                          statement of the method used and is rendered verbatim. */}
                     <span className="text-[10px] text-slate-400">{lspResult.lspServer}</span>
                   </div>
                   {lspResult.diagnostics.length > 0 ? (
@@ -386,7 +400,28 @@ export default function ForgePage() {
                     </ul>
                   ) : (
                     <div className="text-[11px] text-emerald-400/90">
-                      ✓ Clean code structure confirmed by Language Server Protocol. Ready for Human-In-The-Loop review.
+                      {/* CORRECTION (audit finding): was
+                          '✓ Clean code structure confirmed by Language Server Protocol.
+                           Ready for Human-In-The-Loop review.'
+                          No LSP handshake occurs anywhere on this path. For
+                          TypeScript the server calls `ts.transpileModule()` in-process
+                          (server.ts:2784) — that is a compiler invocation, not a
+                          language server: no `initialize` request, no LSP framing, no
+                          tsserver process. For bash and python it is a string
+                          heuristic, and for an unlisted language it is an explicitly
+                          VACUOUS pass (server.ts:2874, 'no validator executed for this
+                          language; the pass is vacuous').
+                          This line also directly contradicted the honest
+                          `lspServer` string rendered 12 pixels above it, which now
+                          reads 'NONE — in-process ts.transpileModule() diagnostics; no
+                          tsserver process spawned, no LSP handshake'.
+                          `lspResult.lspServer` (server-returned) is the authoritative
+                          statement of WHAT ACTUALLY RAN and is preserved verbatim
+                          above; it is not deleted here. What changed is that the pass
+                          branch no longer names a protocol that was never spoken. */}
+                      ✓ No syntax errors reported by the in-process check. This is NOT an
+                      LSP validation — no language server was contacted (see the method
+                      above). Ready for Human-In-The-Loop review.
                     </div>
                   )}
                 </div>

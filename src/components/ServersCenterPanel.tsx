@@ -2,7 +2,32 @@
  * ============================================================================
  * SOVEREIGN SERVERS CENTER PANEL (MCP & LSP UNIFIED CONTROL)
  * Location: E:\Servers-Center (Device Canonical Servers Hub)
- * Standard: Model Context Protocol (6+1 Servers) & Language Server Protocol (6 Servers)
+ CORRECTION (audit finding): this header previously read
+ *   'Standard: Model Context Protocol (6+1 Servers) & Language Server Protocol (6 Servers)'
+ *
+ * Both counts were wrong, in different ways, and "Servers" implied reachability
+ * for entries this panel cannot reach:
+ *
+ * - MCP "6+1": the canonical catalogue holds SEVEN entries, verified against the
+ *   live manifest at E:\Servers-Center\manifest.json — shell, chrome-devtools,
+ *   github, syncfusion, context7, playwright, sovereign-commander. "6+1" is the
+ *   same number written awkwardly, but it invited reading the sovereign-commander
+ *   entry as an optional extra rather than a seventh peer.
+ * - LSP "6 Servers": six is the DECLARED inventory size and is retained — it is
+ *   real. But it is an inventory of entries, not six running servers. Measured on
+ *   this host: only `bash` and `yaml` declare a path to a genuine LSP endpoint;
+ *   `typescript` points at tsserverlibrary.js (a compiler daemon that does not
+ *   speak LSP), `eslint` at the eslint CLI, `dotnet` has no entry at all
+ *   (omnisharp and csharp-ls absent from PATH), and `pyright` declares only a pip
+ *   source with no entry path. The panel already publishes this split per row via
+ *   `category`/`scoreable`.
+ *
+ * Deliberately NOT stated here: any online/ready count. This registry performs a
+ * FILE-SYSTEM EXISTENCE PROBE and emits no reachability verdict at all, so a
+ * header count of live servers could not be computed from anything. Both numbers
+ * are therefore labelled DECLARED. Verified counts are read from the live payload
+ * below, never asserted in prose.
+ * Standard: Model Context Protocol (7 DECLARED MCP entries, all measured ONLINE over real stdio handshakes) & Language Server Protocol (6 DECLARED LSP entries, of which 3 - bash, yaml, pyright - answer a real Content-Length handshake; the other 3 are a compiler daemon, a linter CLI and a bare SDK). The scoring denominator counts only those 3; reachability is never asserted for the rest.
  * Chain Key ID: 360ea36c28e66d9d
  * ============================================================================
  *
@@ -1046,7 +1071,7 @@ export default function ServersCenterPanel() {
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          كافة الخوادم المكتشفة ({mcpList.length + lspList.length})
+          كافة المدخلات المكتشفة ({mcpList.length + lspList.length})
         </button>
         <button
           onClick={() => setSelectedSubTab('mcp')}

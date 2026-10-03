@@ -183,7 +183,21 @@ export default function KernelOSPage() {
       });
       const data = await res.json();
       if (data.ok) {
-        setActionNotice(`Kernel Module ${data.module.name} cryptographically signed with Ed25519 & mapped to ${data.module.loadAddress}`);
+        /* CORRECTION (sweep — NOT on the audit list, and this was the single most
+           misleading string on the page). It previously read:
+             `Kernel Module ${name} cryptographically signed with Ed25519 &
+              mapped to ${addr}`
+           Three false claims in one operator-facing toast:
+             (a) "cryptographically signed" — nothing was signed. The "signature"
+                 is `Math.random()` (see kernelEngine.ts `signModule`).
+             (b) "with Ed25519"  — no Ed25519 key pair exists in this codebase.
+             (c) "mapped to <addr>" — no module was loaded and no address was
+                 mapped. `loadAddress` is synthesised from an array index
+                 (`this.signedModules.length * 0x10000`).
+           The toast still reports that the action completed and still names the
+           module and the address, because the operator does need to know a record
+           was created — but it can no longer be mistaken for a load event. */
+      setActionNotice(`Module record created (NOT signed, NOT loaded): ${data.module.name} — "signature" is ${data.module.signatureEd25519}, loadAddress ${data.module.loadAddress} is a synthetic label, status "${data.module.status}" is hardcoded`);
         setSignedModules(prev => [data.module, ...prev]);
       }
     } catch (e) {
@@ -217,7 +231,19 @@ export default function KernelOSPage() {
                 ENG-AUDIT-DEEP-091 COMPLIANCE
               </span>
               <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-700/60 font-mono text-[10px] uppercase font-bold">
-                100% GAPS RESOLVED
+                {/* CORRECTION (audit finding): was `100% GAPS RESOLVED`.
+                    No closure ratio is computed anywhere on this path. `gapItems`
+                    is a static array of 10 literals, each carrying a hardcoded
+                    `status: 'VERIFIED'` (kernelEngine.ts:513-603). Nothing measures
+                    whether a gap is closed, nothing counts how many are closed, and
+                    there is no denominator — the percentage had no referent.
+                    `100%` also reads as a completeness claim about the gap list
+                    itself, which is equally unsupported: the list's completeness is
+                    whatever ENG-AUDIT-DEEP-091 happened to enumerate.
+                    Replaced with the count that IS observable (the size of the
+                    declared list) plus an explicit statement that no closure
+                    measurement exists. No new number was invented. */}
+                {gapItems.length} GAPS DECLARED — NOT VERIFIED CLOSED
               </span>
               <span className="px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-700/60 font-mono text-[10px] uppercase">
                 COUNCIL MEMBER 8 ACTIVE
@@ -228,7 +254,15 @@ export default function KernelOSPage() {
               Sovereign OS Kernel & Low-Level Architecture Cockpit
             </h1>
             <p className="text-xs text-slate-400 max-w-3xl leading-relaxed">
-              منظومة تشغيل سيادية متكاملة من الطبقة الصفرية (Firmware/Bootloader) إلى نواة المعالجة (Kernel/MMU/IDT)، وناقل الاتصال فائق السرعة (Zero-Copy Ring IPC)، وصولاً إلى نظام الملفات الشجري (VFS) ومصفوفة العزل التشفيري (Ring 0/Ring 3).
+              {/* CORRECTION (sweep). The word "متكاملة" (fully integrated) asserted that these
+                  layers are actually joined into a working operating system. They are
+                  in-process JavaScript data structures and template literals in
+                  kernelEngine.ts: no bootloader runs, no MMU or IDT is programmed, no
+                  ring buffer carries traffic between processes, no VFS mounts anything,
+                  and no ring separation is enforced. The layer NAMES are all real and
+                  all retained — they describe what the cockpit documents, which is the
+                  truthful claim. Only the integration claim was removed. */}
+              منظومة تشغيل سيادية موثَّقة من الطبقة الصفرية (Firmware/Bootloader) إلى نواة المعالجة (Kernel/MMU/IDT)، وناقل الاتصال فائق السرعة (Zero-Copy Ring IPC)، وصولاً إلى نظام الملفات الشجري (VFS) ومصفوفة العزل التشفيري (Ring 0/Ring 3). هذه الطبقات موصوفة وممثَّلة داخل العملية، وليست نظام تشغيل مادياً قيد التشغيل.
             </p>
           </div>
 
@@ -388,12 +422,31 @@ export default function KernelOSPage() {
                   قائمة معالجة وإغلاق الفجوات الهندسية (ENG-AUDIT-DEEP-091 ToDo Matrix)
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  تم إغلاق كافة الفجوات الهندسية العشر المذكورة في تقرير التدقيق المعمق، ونقل النظام بالكامل من الحاوية المجردة إلى معمارية نظام تشغيل سيادي متكامل.
+                  {/* CORRECTION (audit finding): was "تم إغلاق كافة الفجوات
+                      الهندسية العشر ... ونقل النظام بالكامل من الحاوية المجردة إلى
+                      معمارية نظام تشغيل سيادي متكامل" — "ALL TEN engineering gaps
+                      were closed, and the system was moved ENTIRELY from the
+                      abstract container to a fully integrated sovereign OS
+                      architecture." Three unsupported claims:
+                      (a) "كافة" (all) — no closure measurement exists;
+                      (b) "تم إغلاق" (were closed) — each row's 'VERIFIED' is a
+                          hardcoded literal, not a verification result;
+                      (c) "بالكامل" (entirely) — a total-migration claim.
+                      What is true and is now the whole sentence: the ten gaps
+                      were enumerated and each has a written engineering solution
+                      on record. The claims of closure and of completed migration
+                      are not measurable from this page. */}
+                  فُحصت الفجوات الهندسية العشر المذكورة في تقرير التدقيق المعمق، ولكلٍّ منها حلٌّ هندسي موثَّق في السجل. لم يُقَس إغلاق أي فجوة ولم يُتحقق منه، ولم يُقَس مدى انتقال النظام من الحاوية إلى بنية نظام تشغيل.
                 </p>
               </div>
               <div className="text-right">
-                <span className="text-xl font-bold font-mono text-emerald-400">100% COMPLETE</span>
-                <div className="text-[10px] text-slate-500 font-mono">10 VERIFIED ARTIFACTS</div>
+                {/* CORRECTION (audit finding): was `100% COMPLETE` over
+                    `10 VERIFIED ARTIFACTS`. See the header badge above: no
+                    closure ratio is computed and the 'VERIFIED' per-row status
+                    is a literal. The artifact COUNT is a real observable, so the
+                    count is kept and only the false qualifiers are removed. */}
+                <span className="text-xl font-bold font-mono text-slate-300">CLOSURE NOT MEASURED</span>
+                <div className="text-[10px] text-slate-500 font-mono">{gapItems.length} DECLARED GAP ITEMS — NO VERIFICATION PERFORMED</div>
               </div>
             </div>
 
@@ -418,9 +471,21 @@ export default function KernelOSPage() {
                       <span className="px-2 py-0.5 rounded bg-slate-800 text-amber-300 font-mono text-[10px] font-bold">
                         {item.assignedAgent}
                       </span>
-                      <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-700/60 font-mono text-[10px] font-bold flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" />
-                        {item.status}
+                      {/* CORRECTION (sweep). This badge rendered the literal string `VERIFIED` in
+                          emerald green with a check icon, for every one of the ten
+                          rows. `item.status` comes from `gapAuditItems` in
+                          kernelEngine.ts:513-603, where all ten entries carry a
+                          hardcoded `status: 'VERIFIED'`. No verification is performed
+                          on this path, so the green tick was the loudest false
+                          signal on the page.
+                          The literal is still shown — hiding it would destroy the
+                          information that the field EXISTS and what it currently
+                          says — but it is no longer dressed as a passed check, and
+                          it is explicitly attributed to the declared record rather
+                          than to a measurement. `status` and `item.status` are kept
+                          because the value genuinely is part of the data model. */}
+                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-mono text-[10px] font-bold">
+                        DECLARED STATUS: {item.status} (hardcoded — not verified)
                       </span>
                     </div>
                   </div>
@@ -438,8 +503,19 @@ export default function KernelOSPage() {
                   </div>
 
                   <div className="p-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between text-[11px] font-mono">
-                    <span className="text-slate-500">الأثر البرمجي الموثق (Verified Artifact):</span>
-                    <span className="text-cyan-400 font-bold truncate max-w-xl">{item.verifiedArtifact}</span>
+                    {/* CORRECTION (sweep). The label read "الأثر البرمجي الموثق (Verified Artifact)".
+                      "موثق" / "Verified" asserts that an artifact was produced and
+                      checked. No artifact exists: all ten `verifiedArtifact` strings
+                      are hand-written declarations in kernelEngine.ts, and they have
+                      been restated to say so explicitly (they formerly cited EFI
+                      binaries, CPU registers, ACPI tables and a "0.4µs avg latency"
+                      that were never built, written or measured).
+                      The VALUE is still rendered — the operator needs to see what the
+                      record claims — but it is no longer presented as a verified
+                      finding. The colour was dropped from cyan to slate for the same
+                      reason: cyan-bold read as a confirmed result. */}
+                    <span className="text-slate-500">سجل الأثر المعلن — غير مُتحقق منه (Declared Artifact Record — NOT verified):</span>
+                    <span className="text-slate-300 font-mono truncate max-w-xl">{item.verifiedArtifact}</span>
                   </div>
                 </div>
               ))}
@@ -780,7 +856,25 @@ export default function KernelOSPage() {
                 <div className="p-3 rounded bg-slate-950 border border-purple-900/50 font-mono text-xs text-purple-200">
                   <div className="flex justify-between text-[10px] text-slate-500 mb-1">
                     <span>EXECUTION RESULT</span>
-                    <span>LATENCY: {syscallResult.latencyUs}µs</span>
+                    {/* CORRECTION (sweep — NOT on the audit list, found by reading
+                        the producer of this number before trusting the label).
+                        This previously read `LATENCY: {syscallResult.latencyUs}µs`,
+                        presenting a microsecond figure as a measurement.
+                        It is not one. `executeSyscall` (kernelEngine.ts:665) computes
+                        `latency = Number((Math.random() * 0.8 + 0.3).toFixed(2))` —
+                        a random number in the range 0.30–1.10 µs, drawn fresh on every
+                        call. Nothing is timed; there is no hrtime, no clock read and no
+                        comparison before/after. A latency shown in µs invites an operator
+                        to believe a microkernel dispatch was profiled.
+                        The generator itself is in a file whose owner may not change data
+                        flow, so it was NOT rewritten to perform a real timing. The label is
+                        corrected instead, so the number can no longer be read as a
+                        measurement. See the governance report for the escalated fix.
+                        The value is still rendered — deleting it would destroy information
+                        — but it is now labelled as synthetic and its range is stated. */}
+                    <span title="رقم مُركَّب عشوائياً (Math.random) في executeSyscall — ليس قياساً زمنياً">
+                      LATENCY (SYNTHETIC, NOT MEASURED): {syscallResult.latencyUs}µs
+                    </span>
                   </div>
                   <div>{syscallResult.result}</div>
                 </div>
@@ -920,10 +1014,29 @@ export default function KernelOSPage() {
                 <div>
                   <h3 className="text-sm font-bold text-white font-mono flex items-center gap-2">
                     <Key className="w-4 h-4 text-rose-400" />
-                    مختبر التوقيع التشفيري لوحدات النواة (Kernel Module Signing Lab - Ed25519)
+                    {/* CORRECTION (sweep — NOT on the audit list). This heading
+                        said "(Kernel Module Signing Lab - Ed25519)". No Ed25519 key
+                        pair and no asymmetric operation exists anywhere in this
+                        codebase. The panel still performs a signing-lab ACTION and
+                        that action is preserved below; only the false algorithm
+                        attribution is removed. */}
+                    مختبر تسجيل وحدات النواة (Kernel Module Signing Lab — UNSIGNED, no Ed25519)
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    التحقق الإلزامي من التوقيع الرقمي (Mandatory Access Control) قبل حجز أي صفحة في فضاء النواة.
+                    {/* CORRECTION (sweep). The previous sentence read "التحقق الإلزامي
+                        من التوقيع الرقمي (Mandatory Access Control) قبل حجز أي صفحة في
+                        فضاء النواة" — "mandatory signature verification before
+                        allocating any page in kernel address space". Nothing verifies
+                        any signature and nothing gates any allocation: pressing the
+                        button calls /api/kernel/sign-module, which stores a record whose
+                        "signature" is Math.random() (kernelEngine.ts `signModule`) with a
+                        hardcoded `status: 'VERIFIED_ACTIVE'`. No page is allocated, no
+                        access is checked, no enforcement point exists. Describing it as
+                        "mandatory" and as a control implied a security boundary that
+                        this code does not implement. */}
+                    هذا الإجراء يسجّل قيماً فقط ولا يفرض أي قيد: لا يوجد أي تحقّق من توقيع،
+                    ولا يوجد أي فحص صلاحية، ولا تُحجز أي صفحة ذاكرة. الحقل المسمّى
+                    «توقيع» ليس توقيعاً بل سلسلة عشوائية، والحالة المعلنة ثابتة في الشيفرة.
                   </p>
                 </div>
               </div>
@@ -988,10 +1101,31 @@ export default function KernelOSPage() {
                       </div>
                       <div className="text-[10px] text-slate-400 flex justify-between">
                         <span>الوكيل: {m.authorAgent}</span>
-                        <span className="text-emerald-400 font-bold">VERIFIED</span>
+                        {/* CORRECTION (sweep). This rendered the word `VERIFIED` in
+                            emerald for every signed module. Nothing verifies these
+                            modules: `status: 'VERIFIED_ACTIVE'` is hardcoded in
+                            kernelEngine.ts (line 692 for modules created by
+                            `signModule`, lines 475/486/497 for the three seeded
+                            literals), and the accompanying "signature" is either
+                            `Math.random()` or a hardcoded string. `status` itself is
+                            NOT renamed because the union
+                            `'VERIFIED_ACTIVE' | 'REVOKED' | 'QUARANTINED'` is
+                            declared in src/os/types.ts, which this owner may not
+                            edit. So the declared status is still displayed, but it
+                            is no longer presented as a passed verification. */}
+                        <span className="text-amber-400 font-bold" title="hardcoded status literal — no signature was verified">
+                          {m.status} (declared — not verified)
+                        </span>
                       </div>
                       <div className="p-1.5 rounded bg-slate-900 text-[9px] text-slate-400 truncate">
-                        SIG: {m.signatureEd25519}
+                        {/* CORRECTION: was `SIG: {m.signatureEd25519}`. The field is
+                            named `signatureEd25519` in src/os/types.ts (not this
+                            owner's file), but its value is prefixed `unsigned-random:`
+                            for freshly "signed" modules and `unsigned-literal:` for
+                            the three seeded ones. There is no Ed25519 key pair and no
+                            asymmetric operation in this codebase. Labelling the line
+                            `SIG` invited the reader to treat it as a signature. */}
+                        NOT-A-SIGNATURE (unsigned): {m.signatureEd25519}
                       </div>
                       <div className="flex justify-between items-center text-[10px] text-slate-500 pt-1 border-t border-slate-900">
                         <span>ADDR: {m.loadAddress}</span>

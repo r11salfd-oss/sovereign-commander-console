@@ -277,6 +277,12 @@ export interface ProberConfig {
   readonly port: number;
   readonly bind: string;
   readonly token: string;
+  /**
+   * Where the token came from: `file` (HOST_PROBER_TOKEN_FILE), `env`
+   * (HOST_PROBER_TOKEN literal) or `none`. Published as provenance so an operator
+   * can see whether a readable literal is still in play. Never the value itself.
+   */
+  readonly tokenSource: 'file' | 'env' | 'none';
   readonly manifestEnabled: boolean;
   readonly repoRoot: string;
   readonly nodeBinary: string | null;
@@ -382,13 +388,45 @@ function resolveNodeBinary(root: string, manifestNode: string | null): string | 
  * therefore has nothing to protect; a CI one-shot run should not need a secret.
  */
 export function loadConfig(requireToken: boolean): ProberConfig {
-  const tokenRaw = process.env['HOST_PROBER_TOKEN'];
-  const token = typeof tokenRaw === 'string' ? tokenRaw.trim() : '';
+  // The token may arrive two ways, and the FILE is strongly preferred.
+  //
+  // Why: `HOST_PROBER_TOKEN` as a literal has to live somewhere a service can
+  // read at boot. For the Windows service that "somewhere" is the NSSM
+  // `AppEnvironmentExtra` registry value, which was measured readable by a
+  // NON-ADMINISTER session — so a literal there is a published secret. That is
+  // the same defect that was deliberately removed from the container (where
+  // `SOVEREIGN_CLI_TOKEN` became `SOVEREIGN_CLI_TOKEN_FILE`). Moving the defect
+  // rather than removing it is not a fix.
+  //
+  // `HOST_PROBER_TOKEN_FILE` points at a file whose contents are the token.
+  // The environment literal remains supported for CI and one-shot runs, but a
+  // socket-binding service that has a file available must use the file.
+  const tokenFilePath = process.env['HOST_PROBER_TOKEN_FILE'];
+  let token = '';
+  let tokenSource = 'none';
+  if (typeof tokenFilePath === 'string' && tokenFilePath.trim().length > 0) {
+    const candidate = readFileSync(tokenFilePath.trim(), 'utf8').trim();
+    if (candidate.length > 0) {
+      token = candidate;
+      tokenSource = 'file';
+    }
+  }
+  if (token.length === 0) {
+    const tokenRaw = process.env['HOST_PROBER_TOKEN'];
+    if (typeof tokenRaw === 'string' && tokenRaw.trim().length > 0) {
+      token = tokenRaw.trim();
+      tokenSource = 'env';
+    }
+  }
+
   if (requireToken && token.length < MIN_TOKEN_LENGTH) {
     // Fail closed. A weak or absent token is refused outright rather than
     // silently downgraded to an unauthenticated read-only service.
     throw new Error(
-      `HOST_PROBER_TOKEN must be set and at least ${MIN_TOKEN_LENGTH} characters long before the prober will bind a socket. ` +
+      `No usable prober token. Set HOST_PROBER_TOKEN_FILE to a file containing at least ` +
+        `${MIN_TOKEN_LENGTH} characters (PREFERRED — a literal in the environment is readable ` +
+        `to anyone who can read the process or service configuration), or HOST_PROBER_TOKEN to ` +
+        `a literal of at least ${MIN_TOKEN_LENGTH} characters for CI / --once runs. ` +
         `Generate one with: node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`,
     );
   }
@@ -425,6 +463,10 @@ export function loadConfig(requireToken: boolean): ProberConfig {
     port,
     bind,
     token,
+    // Which mechanism supplied the token. Published so an operator can tell a
+    // file-backed service from one still carrying a readable literal. The VALUE
+    // is never published, only this provenance.
+    tokenSource: tokenSource as 'file' | 'env' | 'none',
     manifestEnabled: !envFlagDisabled('HOST_PROBER_MANIFEST'),
     repoRoot,
     nodeBinary: null, // resolved in `buildInventory`, which also reads the manifest
@@ -1584,6 +1626,8 @@ export async function sweep(config: ProberConfig, options: SweepOptions = {}): P
   return {
     ok: true,
     chainKeyId: HOST_PROBER_CHAIN_KEY_ID,
+    unavailableReason: null,
+    unavailableReasonText: null,
     proberVersion: PROBER_VERSION,
     hostPlatform: `${platform()} ${arch()}`,
     nodeRuntime: inventory.nodeBinary === null ? 'unresolved' : 'servers-center-runtime',
@@ -1769,6 +1813,8 @@ function lspStatusWithoutTransport(config: ProberConfig): LspProbeReport {
   return {
     ok: true,
     chainKeyId: HOST_PROBER_CHAIN_KEY_ID,
+    unavailableReason: null,
+    unavailableReasonText: null,
     proberVersion: PROBER_VERSION,
     generatedAt,
     provenance: 'MEASURED_BY_PROBER',

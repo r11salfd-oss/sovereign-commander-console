@@ -395,6 +395,21 @@ function checkChainCoherence(payload: AnyRecord): void {
   const chainStatus = str(selfTest ? selfTest.chainStatus : null);
   const chainVerified = selfTest ? selfTest.chainVerified === true : null;
   const basisChainSource = basis ? str(basis.chainSource) : null;
+  const claimsUnverified = /^UNVERIFIED_/i.test(chainStatus);
+
+  // `TAMPERED_REJECTED` is a NEGATIVE verdict, not a positive one. It did not
+  // exist when this verifier was written; the ledger-integrity fix introduced it
+  // when verification began examining the whole file instead of only its
+  // rehydrated prefix. Left unclassified it fell into the positive branch below,
+  // which then demanded it carry NO reason — i.e. the harness required a tamper
+  // verdict to be unexplained. That is precisely backwards: a NEGATIVE verdict
+  // is the one that most needs to say why.
+  //
+  // Classifying it correctly relaxes nothing. It moves the status under the
+  // contradiction and boolean-consistency checks, and adds the obligation to
+  // explain itself.
+  const isNegativeVerdict =
+    claimsUnverified || /^TAMPERED_/i.test(chainStatus) || /REJECTED/i.test(chainStatus);
 
   if (!chainStatus) {
     recordVacuous(
@@ -411,13 +426,53 @@ function checkChainCoherence(payload: AnyRecord): void {
       'an explicit verdict string'
     );
 
+    // 2z. A bare `ok` is the most-read field in the payload and the least
+    // qualified. It once meant "the JSON-RPC round-trip worked" — so a TAMPERED
+    // chain shipped with `ok: true` beside `chainVerified: false`, and any
+    // consumer reading `ok` concluded the system was sound. A field named `ok`
+    // must mean what a reader takes it to mean.
+    //
+    // The transport result belongs in its own field (`transportOk`). If a payload
+    // publishes `ok:true` beside any negative verdict, it is contradicting
+    // itself, whatever it meant `ok` to mean internally.
+    const selfTestOk = selfTest ? selfTest.ok === true : null;
+    if (selfTestOk !== null) {
+      record(
+        'self_test_ok_agrees_with_chain_verdict',
+        'an `ok:true` published beside a chain verdict that is not a verified one',
+        !isNegativeVerdict || selfTestOk === false,
+        `ok=${String(selfTestOk)}, chainVerified=${String(chainVerified)}, status=${chainStatus}`,
+        'ok=false whenever the chain verdict is negative',
+        selfTestOk === true && isNegativeVerdict
+          ? `CONTRADICTION: rpcSelfTest.ok is true while the chain is reported ${chainStatus}. A reader of \`ok\` is told the system is fine; a reader of the status is told the ledger does not verify.`
+          : undefined
+      );
+    }
+
     // 2a. THE CONTRADICTION CHECK.
     // If the verdict is an UNVERIFIED_* form, nothing anywhere in the payload may
     // simultaneously claim INTACT. Two fields disagreeing about the same fact is
     // the signature of a fabricated positive: someone kept the old green field
     // and added an honest field beside it.
     const claimsUnverified = /^UNVERIFIED_/i.test(chainStatus);
-    if (claimsUnverified) {
+
+
+    // A negative verdict must justify itself. A tamper or an unproven chain
+    // reported without a reason is unfalsifiable: the reader cannot tell a
+    // detected attack from a parsing fault from an empty ledger.
+    record(
+      'negative_verdict_has_a_reason',
+      'a negative verdict (UNVERIFIED_* / TAMPERED_*) published without saying why',
+      !isNegativeVerdict || (str(selfTest ? selfTest.chainVerifiedReason : null) ?? '') !== '',
+      `status=${chainStatus}, reason=${
+        str(selfTest ? selfTest.chainVerifiedReason : null) === null ? 'ABSENT' : 'present'
+      }`,
+      isNegativeVerdict
+        ? 'a non-empty reason string'
+        : 'n/a — status is not a negative verdict'
+    );
+
+    if (claimsUnverified || /^TAMPERED_/i.test(chainStatus)) {
       const signals = collectChainSignals(payload);
       const contradictions = signals.claims.filter(
         (s) => s.path !== '$.mcp.rpcSelfTest.chainStatus'
