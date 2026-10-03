@@ -52,6 +52,27 @@ $Script:LogRoot   = Join-Path $env:APPDATA 'sovereign-commander-console'
 $Script:ProberExitCodes = @{ Restart = 0; Reboot = 2; Exit = 1 }
 $Script:NssmDelayMs    = 3000
 
+# ---------------------------------------------------------------------------
+# Cold-boot resilience constants
+# ---------------------------------------------------------------------------
+# The readiness record is written to ProgramData rather than to %APPDATA% on
+# purpose. The service pins APPDATA to the operator profile, and "is APPDATA
+# pinned correctly" is one of the things being tested - so the place the verdict
+# is stored must NOT depend on the thing being verified. ProgramData is
+# machine-scoped, is written by LocalSystem, and is readable by BUILTIN\Users.
+$Script:MachineRoot     = 'C:\ProgramData\sovereign-commander-console'
+$Script:ReadinessFile   = Join-Path $Script:MachineRoot 'readiness.json'
+$Script:ExpectationsFile = Join-Path $Script:MachineRoot 'expectations.json'
+$Script:RecoveryTaskPath = '\Sovereign\'
+$Script:RecoveryTaskName = 'HostProberRecovery'
+
+# The service wrapper. NSSM runs it instead of node.exe directly; it performs the
+# startup readiness self-test and then runs the prober unchanged.
+$Script:BootGuardName   = 'boot-guard.mjs'
+
+# Names the guard must assert PRESENT but must never read the value of.
+$Script:SecretEnvNames  = @('HOST_PROBER_TOKEN')
+
 # The token is held here so Protect-Secret can scrub it out of anything that is
 # about to be printed. Never echoed. Never interpolated into a log line.
 $Script:SecretValues = New-Object System.Collections.Generic.List[string]
@@ -203,6 +224,251 @@ function Get-TsxCliPath {
 
 function Get-TokenFilePath {
     return (Join-Path $env:APPDATA 'sovereign-commander-console\secrets\host-prober-token.txt')
+}
+
+function Get-BootGuardPath {
+    return (Join-Path $PSScriptRoot $Script:BootGuardName)
+}
+
+function Get-RecoveryScriptPath {
+    return (Join-Path $PSScriptRoot 'recover-prober.ps1')
+}
+
+function Merge-ReadinessRecord {
+    <#
+      Merge one key into the readiness file without clobbering the keys another
+      writer owns.
+
+      WRITER OWNERSHIP: boot-guard.mjs owns `service`, `boot`, `verdict`;
+      recover-prober.ps1 owns `recovery`. Both merge under the same short
+      exclusive lock file, so a service start and a recovery attempt that happen
+      at the same moment cannot interleave and neither can erase the other.
+
+      The write is atomic (temp file + rename), so a reader can never observe a
+      half-written record - which matters because boot-verdict.ps1 is expected to
+      be runnable at any moment, including while the service is starting.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Key,
+        [Parameter(Mandatory)]$Value
+    )
+
+    $dir = Split-Path $Path -Parent
+    if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $lock = "$Path.lock"
+    $handle = $null
+    $deadline = (Get-Date).AddSeconds(5)
+    while ($null -eq $handle) {
+        try {
+            $handle = [System.IO.File]::Open($lock, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        } catch {
+            # Reap a lock left behind by a process that died holding it.
+            try {
+                if (((Get-Date) - (Get-Item $lock).LastWriteTime).TotalSeconds -gt 10) { Remove-Item $lock -Force -ErrorAction SilentlyContinue }
+            } catch { }
+            if ((Get-Date) -gt $deadline) {
+                return [pscustomobject]@{ Ok = $false; Path = $Path; Error = "could not acquire $lock within 5s" }
+            }
+            Start-Sleep -Milliseconds 50
+        }
+    }
+
+    try {
+        $current = $null
+        try { $current = (Read-TextNoBom -Path $Path | ConvertFrom-Json) } catch { $current = $null }
+        if ($null -eq $current) {
+            $current = [pscustomobject]@{
+                schema        = 'sovereign.prober.readiness/1'
+                chainKeyId    = '360ea36c28e66d9d'
+                verdict       = 'UNKNOWN'
+                verdictMeaning = @{
+                    UNKNOWN  = 'no startup self-test has run yet on this machine'
+                    READY    = 'every cold-boot precondition the prober needs existed at the moment it started'
+                    DEGRADED = 'the prober started, but at least one ADVISORY boot hazard was present at that moment'
+                    FAIL     = 'at least one REQUIRED check failed, so the measurement is wrong or silently degraded'
+                }
+                createdAtUtc  = (Get-Date).ToUniversalTime().ToString('o')
+            }
+        }
+        $bag = [ordered]@{}
+        foreach ($p in $current.PSObject.Properties) { $bag[$p.Name] = $p.Value }
+        $bag[$Key] = $Value
+        $bag['updatedAtUtc'] = (Get-Date).ToUniversalTime().ToString('o')
+
+        $tmp = "$Path.tmp"
+        Write-Utf8NoBom -Path $tmp -Content (([pscustomobject]$bag | ConvertTo-Json -Depth 12) + "`n")
+        Move-Item -LiteralPath $tmp -Destination $Path -Force
+        return [pscustomobject]@{ Ok = $true; Path = $Path; Error = $null }
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Path = $Path; Error = $_.Exception.Message }
+    } finally {
+        if ($handle) { try { $handle.Close(); $handle.Dispose() } catch { } }
+        Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Boot-resilience helpers
+# ---------------------------------------------------------------------------
+
+function Write-Utf8NoBom {
+    <#
+      Write a file as UTF-8 WITHOUT a byte order mark.
+
+      MEASURED: Windows PowerShell 5.1's `Set-Content -Encoding UTF8` emits a BOM
+      (EF BB BF). boot-guard.mjs reads the expectations file with JSON.parse, which
+      rejects a leading U+FEFF, so the first real service start reported the
+      expectations as "absent" while the file was present and correct. The guard
+      strips the BOM on read as well, and this writer stops producing one, so the
+      two sides agree whichever way a file was produced.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][AllowEmptyString()][string]$Content)
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $enc)
+}
+
+function Read-TextNoBom {
+    param([Parameter(Mandatory)][string]$Path)
+    return ([System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)).TrimStart([char]0xFEFF)
+}
+
+function Get-Prop {
+    <#
+      StrictMode-safe property read.
+
+      common.ps1 runs under Set-StrictMode -Version Latest, which (from 2.0 on)
+      THROWS on a reference to a property that does not exist. The readiness
+      record is written by a separate process and its shape can legitimately
+      differ between versions, so every field read out of it goes through here
+      instead of being dereferenced directly. A missing field must degrade the
+      verdict, never abort the verifier.
+    #>
+    param($Object, [Parameter(Mandatory)][string]$Name, $Default = $null)
+    if ($null -eq $Object) { return $Default }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) { return $Object[$Name] }
+        return $Default
+    }
+    $p = $Object.PSObject.Properties[$Name]
+    if ($null -eq $p) { return $Default }
+    return $p.Value
+}
+
+function Read-JsonFile {
+    <#  Returns $null (and a reason on $Script:LastJsonError) for missing or malformed JSON.  #>
+    param([Parameter(Mandatory)][string]$Path)
+    $Script:LastJsonError = $null
+    if (-not (Test-Path $Path)) { $Script:LastJsonError = "not found: $Path"; return $null }
+    try {
+        return (Read-TextNoBom -Path $Path | ConvertFrom-Json)
+    } catch {
+        $Script:LastJsonError = "unparsable JSON at ${Path}: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Get-ReadinessRecord {
+    <#
+      The readiness record, with the path it came from and any parse error.
+
+      Falls back to the service log directory when ProgramData is unreadable, so
+      a machine whose ProgramData ACLs were changed still yields a verdict
+      instead of a silent "no record".
+    #>
+    param([string]$Path = $Script:ReadinessFile)
+    $r = Read-JsonFile -Path $Path
+    if ($null -ne $r) { return [pscustomobject]@{ Path = $Path; Record = $r; Error = $null } }
+
+    $alt = Join-Path $Script:LogRoot 'readiness.json'
+    if ($alt -ne $Path -and (Test-Path $alt)) {
+        $r2 = Read-JsonFile -Path $alt
+        if ($null -ne $r2) { return [pscustomobject]@{ Path = $alt; Record = $r2; Error = $null } }
+        return [pscustomobject]@{ Path = $alt; Record = $null; Error = $Script:LastJsonError }
+    }
+    return [pscustomobject]@{ Path = $Path; Record = $null; Error = $Script:LastJsonError }
+}
+
+function Get-ExpectationsRecord {
+    return (Read-JsonFile -Path $Script:ExpectationsFile)
+}
+
+function Get-BootIdentity {
+    <#
+      Identity of the CURRENT boot, from three independent sources.
+
+      os.uptime-equivalent is not available in PowerShell, so LastBootUpTime from
+      Win32_OperatingSystem is used, plus BootId from the prefetch parameters,
+      which increments once per power-on and is therefore a hard boot identity
+      that cannot be confused with a clock change.
+    #>
+    $lastBoot = $null
+    try { $lastBoot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime } catch { }
+    $uptimeSec = $null
+    if ($lastBoot) { $uptimeSec = [int]((Get-Date) - $lastBoot).TotalSeconds }
+
+    $bootId = $null
+    $bootIdError = $null
+    try {
+        $k = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters'
+        $v = (Get-ItemProperty -Path $k -Name BootId -ErrorAction Stop).BootId
+        if ($null -ne $v) { $bootId = [int]$v }
+    } catch { $bootIdError = $_.Exception.Message }
+
+    return [pscustomobject]@{
+        LastBootUpTime  = $lastBoot
+        BootTimeUtc     = if ($lastBoot) { $lastBoot.ToUniversalTime().ToString('o') } else { $null }
+        UptimeSec       = $uptimeSec
+        BootId          = $bootId
+        BootIdError     = $bootIdError
+        NowUtc          = (Get-Date).ToUniversalTime().ToString('o')
+    }
+}
+
+function Get-RecoveryTaskName {
+    return ($Script:RecoveryTaskPath.TrimEnd('\') + '\' + $Script:RecoveryTaskName)
+}
+
+function Get-RecoveryTask {
+    param([string]$TaskName = (Get-RecoveryTaskName))
+    return (Get-ScheduledTask -TaskName $Script:RecoveryTaskName -TaskPath $Script:RecoveryTaskPath -ErrorAction SilentlyContinue)
+}
+
+function Write-Expectations {
+    <#
+      Record what the installer PINNED, so the guard can prove at boot that the
+      running environment is the pinned one and was not re-derived.
+
+      Deliberately contains no secret: the token is listed by NAME in
+      secretEnvNames and never by value, and the token's value is not even read
+      here - only its length, which is already reported by the installer.
+    #>
+    param(
+        [Parameter(Mandatory)][hashtable]$ExpectedEnv,
+        [Parameter(Mandatory)][string]$ServiceAccount,
+        [string]$MeasuredProfile,
+        [bool]$ProfilePinned = $true,
+        [Parameter(Mandatory)][hashtable]$Paths
+    )
+    New-Item -ItemType Directory -Force -Path $Script:MachineRoot | Out-Null
+    $record = [ordered]@{
+        schema                = 'sovereign.prober.expectations/1'
+        chainKeyId            = '360ea36c28e66d9d'
+        writtenAtUtc          = (Get-Date).ToUniversalTime().ToString('o')
+        serviceAccount        = $ServiceAccount
+        profilePinned         = $ProfilePinned
+        measuredProfile       = $MeasuredProfile
+        serviceAccountProfile = if ($ServiceAccount -eq 'LocalSystem') { Join-Path $env:SystemRoot 'System32\config\systemprofile' } else { $null }
+        secretEnvNames        = $Script:SecretEnvNames
+        expectedEnv           = $ExpectedEnv
+        paths                 = $Paths
+    }
+    # ACL: SYSTEM and Administrators full, BUILTIN\Users read. The operator must
+    # be able to READ the verdict without being able to forge it.
+    $tmp = "$($Script:ExpectationsFile).tmp"
+    Write-Utf8NoBom -Path $tmp -Content (($record | ConvertTo-Json -Depth 8) + "`n")
+    Move-Item -LiteralPath $tmp -Destination $Script:ExpectationsFile -Force
+    return $Script:ExpectationsFile
 }
 
 function Get-NssmExe {

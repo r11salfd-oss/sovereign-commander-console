@@ -74,6 +74,28 @@ Write-Host '================================================================' -F
 Write-Host ' SOVEREIGN HOST PROBER - SERVICE REMOVAL' -ForegroundColor White
 Write-Host '================================================================' -ForegroundColor DarkGray
 
+# ---------------------------------------------------------------------------
+# 0. The independent recovery path must go FIRST
+# ---------------------------------------------------------------------------
+# Order is load-bearing. The recovery task's whole job is to Start-Service, so
+# removing the service first would leave a task pointing at nothing, and a task
+# that fires afterwards would record SERVICE_ABSENT on every logon.
+$recoveryRemover = Join-Path $PSScriptRoot 'remove-recovery-task.ps1'
+Write-Step 'Removing the independent recovery path first (it would otherwise point at a service that no longer exists)'
+if (Test-Path $recoveryRemover) {
+    & $recoveryRemover | ForEach-Object { Write-Protected $_ }
+    if ($LASTEXITCODE -ne 0) { Write-Warn "remove-recovery-task.ps1 exited $LASTEXITCODE" }
+} else {
+    $t = Get-RecoveryTask
+    if ($t) {
+        if ($WhatIfOnly) { Write-Info "[WhatIf] would unregister $(Get-RecoveryTaskName)" }
+        else {
+            Unregister-ScheduledTask -TaskName $Script:RecoveryTaskName -TaskPath $Script:RecoveryTaskPath -Confirm:$false
+            Write-Ok "unregistered $(Get-RecoveryTaskName)"
+        }
+    } else { Write-Info 'no recovery task registered' }
+}
+
 $nssm = Get-NssmExe
 $svc  = Get-Service -Name $Script:ServiceName -ErrorAction SilentlyContinue
 
@@ -158,6 +180,26 @@ if ($PurgeLogs) {
         }
     }
 }
+
+# ---------------------------------------------------------------------------
+# Install-time expectations and the readiness record
+# ---------------------------------------------------------------------------
+# The expectations file is part of the INSTALLATION: without it the wrapper
+# cannot cross-check its environment, so it goes with the service. The readiness
+# record is deliberately KEPT - it is the evidence of what the last start
+# actually found, and deleting it would erase the only trace of a bad boot.
+Write-Host ''
+if ($WhatIfOnly) {
+    Write-Info "[WhatIf] would remove $($Script:ExpectationsFile) (part of the installation)"
+    Write-Info "readiness record $($Script:ReadinessFile) kept as evidence; remove it with .\remove-recovery-task.ps1 -PurgeReadiness"
+} elseif (Test-Path $Script:ExpectationsFile) {
+    Write-Step "Removing install-time expectations $Script:ExpectationsFile"
+    Remove-Item -LiteralPath $Script:ExpectationsFile -Force
+    Write-Ok 'removed'
+} else {
+    Write-Info "expectations file not present at $($Script:ExpectationsFile)"
+}
+Write-Ok "readiness record kept as evidence: $Script:ReadinessFile (exists=$(Test-Path $Script:ReadinessFile))"
 
 $listener = Get-PortListener -Port $Script:DefaultPort
 Write-Host ''

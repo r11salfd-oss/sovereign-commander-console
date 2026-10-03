@@ -143,7 +143,7 @@ Write-Host '================================================================' -F
 # ---------------------------------------------------------------------------
 # 1. Resolve the runtime - absolutely, never through PATH
 # ---------------------------------------------------------------------------
-Write-Step '1/8 Resolving an absolute Node runtime and tsx entry point'
+Write-Step '1/9 Resolving an absolute Node runtime and tsx entry point'
 
 if (-not $NodeExe) {
     $cmd = Get-Command node.exe -ErrorAction SilentlyContinue
@@ -173,6 +173,15 @@ Write-Ok "prober    : $prober"
 $repoRoot = Get-RepoRoot
 Write-Ok "repo root : $repoRoot"
 
+# The startup readiness wrapper. NSSM runs THIS instead of node.exe directly.
+# It measures the boot-time preconditions, writes the readiness record, and then
+# runs the prober unchanged, so nothing about the instrument's own lifecycle,
+# stdio, console or exit code differs from before.
+$guard = Get-BootGuardPath
+if (-not (Test-Path $guard)) { throw "boot guard not found at $guard. Refusing to install a service that cannot prove its own boot conditions." }
+$guard = (Resolve-Path $guard).Path
+Write-Ok "boot guard: $guard"
+
 if ($Bind -ne $Script:DefaultBind) {
     throw "Bind '$Bind' refused. HOST_PROBER.md section 9 control 1: the prober enforces loopback-only and so does this installer."
 }
@@ -180,7 +189,7 @@ if ($Bind -ne $Script:DefaultBind) {
 # ---------------------------------------------------------------------------
 # 2. Resolve NSSM (download + integrity check if absent)
 # ---------------------------------------------------------------------------
-Write-Step '2/8 Resolving NSSM'
+Write-Step '2/9 Resolving NSSM'
 if (-not $NssmPath) { $NssmPath = Get-NssmExe -InstallIfMissing }
 if (-not $NssmPath -or -not (Test-Path $NssmPath)) { throw 'nssm.exe could not be resolved or installed' }
 $NssmPath = (Resolve-Path $NssmPath).Path
@@ -193,7 +202,7 @@ if ($NssmPath -like "$repoRoot*") {
 # ---------------------------------------------------------------------------
 # 3. Read the token - length only is ever reported
 # ---------------------------------------------------------------------------
-Write-Step '3/8 Resolving the bearer token'
+Write-Step '3/9 Resolving the bearer token'
 if (-not $TokenFile) { $TokenFile = Get-TokenFilePath }
 if (-not (Test-Path $TokenFile)) {
     throw "Token file not found at $TokenFile. See HOST_PROBER.md section 3. Refusing to install a service without a token: the prober fails closed without one, and an unauthenticated prober is not an option."
@@ -209,7 +218,7 @@ Write-Ok "token      : RESOLVED, length=$($token.Length) chars, value never prin
 # ---------------------------------------------------------------------------
 # 4. Build a deterministic environment for session 0
 # ---------------------------------------------------------------------------
-Write-Step '4/8 Building the service environment (no dependence on an interactive shell)'
+Write-Step '4/9 Building the service environment (no dependence on an interactive shell)'
 
 $machinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
 $userPath    = [Environment]::GetEnvironmentVariable('PATH', 'User')
@@ -291,22 +300,85 @@ Write-Ok "HOST_PROBER_* pinned: ROOT=$ServerRoot PORT=$Port BIND=$Bind ALLOWED_H
 Write-Ok 'NODE_OPTIONS pinned empty so a stray NODE_OPTIONS in some other profile cannot break the boot start'
 
 # ---------------------------------------------------------------------------
+# 4b. Record what was PINNED, so the guard can prove it at boot
+# ---------------------------------------------------------------------------
+# The guard asserts the LIVE process environment byte-for-byte against this file.
+# Without it, "APPDATA is pinned" would remain a belief about the installer
+# instead of a measurement taken by the process that has to live with it.
+#
+# The token is listed BY NAME in secretEnvNames and its value is never placed
+# here; only names, paths and lengths cross this boundary.
+Write-Step '4b/9 Recording install-time expectations for the boot self-test'
+$expectEnv = [ordered]@{}
+foreach ($k in $envPairs.Keys) {
+    if ($Script:SecretEnvNames -contains $k) { continue }
+    $expectEnv[$k] = [string]$envPairs[$k]
+}
+$expectPaths = [ordered]@{
+    nodeExe       = $NodeExe
+    tsxCli        = $tsxCli
+    proberScript  = $prober
+    repoRoot      = $repoRoot
+    manifest      = (Join-Path $repoRoot 'config\servers_center_manifest.json')
+    serverRoot    = $ServerRoot
+    appDirectory  = $repoRoot
+    readinessFile = $Script:ReadinessFile
+    expectationsFile = $Script:ExpectationsFile
+    bootGuard     = $guard
+}
+$profilePinned = [bool](-not $NoProfileMapping -and $MeasuredProfile)
+$measuredProfile = if ($profilePinned) { (Resolve-Path $MeasuredProfile).Path.TrimEnd('\') } else { $null }
+$expectFile = Write-Expectations -ExpectedEnv $expectEnv `
+                                -ServiceAccount 'PENDING-ACCOUNT-SELECTION' `
+                                -MeasuredProfile $measuredProfile `
+                                -ProfilePinned $profilePinned `
+                                -Paths $expectPaths
+Write-Ok "expectations: $expectFile ($($expectEnv.Count) non-secret variables + $($expectPaths.Count) paths; no token value)"
+
+# ---------------------------------------------------------------------------
 # 5. Remove any previous registration (idempotent re-install)
 # ---------------------------------------------------------------------------
-Write-Step '5/8 Clearing any previous registration of this service'
+Write-Step '5/9 Clearing any previous registration of this service'
 $existing = Get-Service -Name $Script:ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
     Write-Info "found existing '$($existing.Name)' state=$($existing.Status); removing it first"
-    if ($existing.Status -eq 'Running') {
+    if ($existing.Status -ne 'Stopped') {
         [void](Invoke-Nssm -NssmPath $NssmPath -Arguments @('stop', $Script:ServiceName) -Quiet)
         $deadline = (Get-Date).AddSeconds(25)
-        while ((Get-Date) -lt $deadline -and (Get-Service -Name $Script:ServiceName).Status -eq 'Running') {
+        while ((Get-Date) -lt $deadline -and (Get-Service -Name $Script:ServiceName -EA SilentlyContinue).Status -ne 'Stopped') {
             Start-Sleep -Milliseconds 500
         }
     }
     [void](Invoke-Nssm -NssmPath $NssmPath -Arguments @('remove', $Script:ServiceName, 'confirm'))
-    Start-Sleep -Seconds 1
-    Write-Ok 'previous registration removed'
+
+    # MEASURED BUG, fixed here. `nssm remove` returns exit 0 and prints
+    # "removed successfully!" while the service is only MARKED FOR DELETION
+    # (registry DeleteFlag=1) and the nssm.exe shim keeps the SCM handle open. The
+    # name is still taken, and the very next command -
+    #     nssm install <same name>
+    # fails with exit 5 "Error creating service!". A one-second sleep does not
+    # close it. The removal is therefore ASSERTED: wait for both the service
+    # object and the registry key to disappear, and reap a lingering nssm.exe
+    # shim if one is what is holding the name.
+    $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$Script:ServiceName"
+    $deadline = (Get-Date).AddSeconds(45)
+    $released = $false
+    while ((Get-Date) -lt $deadline) {
+        $stillSvc = Get-Service -Name $Script:ServiceName -EA SilentlyContinue
+        $stillKey = Test-Path $key
+        if (-not $stillSvc -and -not $stillKey) { $released = $true; break }
+        $holders = @(Get-CimInstance Win32_Process -Filter "Name='nssm.exe'" -EA SilentlyContinue)
+        if ($holders.Count -gt 0) {
+            Write-Warn "the service name is still held ($([bool]$stillSvc) svc / DeleteFlag pending); $($holders.Count) lingering nssm.exe shim(s) reaped"
+            foreach ($h in $holders) { $null = Invoke-Native -FilePath 'taskkill.exe' -Arguments @('/PID', $h.ProcessId, '/F') -Quiet }
+            Start-Sleep -Milliseconds 500
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $released) {
+        throw "'$Script:ServiceName' was removed but the name is STILL TAKEN (service present=$( [bool](Get-Service -Name $Script:ServiceName -EA SilentlyContinue) ), registry key present=$(Test-Path $key)). Re-running would fail with nssm 'Error creating service!'. Resolve the lingering handle and re-run."
+    }
+    Write-Ok 'previous registration removed AND the service name is confirmed released (service object gone, registry key gone)'
 } else {
     Write-Ok 'no previous registration present'
 }
@@ -314,9 +386,41 @@ if ($existing) {
 # ---------------------------------------------------------------------------
 # 6. Install + configure
 # ---------------------------------------------------------------------------
-Write-Step "6/8 Registering service '$Script:ServiceName'"
-$rInstall = Invoke-Nssm -NssmPath $NssmPath -Arguments @('install', $Script:ServiceName, $NodeExe, $tsxCli, $prober)
+Write-Step "6/9 Registering service '$Script:ServiceName'"
+$rInstall = Invoke-Nssm -NssmPath $NssmPath -Arguments @('install', $Script:ServiceName, $NodeExe)
 if ($rInstall.ExitCode -ne 0) { throw "nssm install failed with exit $($rInstall.ExitCode): $($rInstall.StdErr)$($rInstall.StdOut)" }
+
+# Application stays the absolute node.exe; AppParameters becomes the guard plus
+# the ORIGINAL tsx/prober argument vector, verbatim. Nothing is re-quoted or
+# re-ordered, so the prober sees exactly the command line it saw before.
+# Application stays the absolute node.exe; AppParameters becomes the ABSOLUTE
+# guard path plus the ORIGINAL tsx/prober argument vector, verbatim. Nothing is
+# re-quoted or re-ordered, so the prober still sees exactly the command line it
+# saw before - only prefixed by the wrapper.
+#
+# MEASURED BUG, designed out here: an earlier version of this line omitted the
+# guard path and started with `--readiness`, so node.exe received `--readiness`
+# as ITS OWN first argument and refused with "bad option: --readiness". The
+# service failed to start under both candidate accounts and the installer
+# correctly refused to claim success. The guard path is therefore asserted to be
+# present and to be the FIRST AppParameters token, below.
+$appParams = (ConvertTo-CommandLineArg $guard) +
+             ' --readiness ' + (ConvertTo-CommandLineArg $Script:ReadinessFile) +
+             ' --expectations ' + (ConvertTo-CommandLineArg $Script:ExpectationsFile) +
+             ' -- ' + (ConvertTo-CommandLineArg $tsxCli) + ' ' + (ConvertTo-CommandLineArg $prober)
+[void](Invoke-Nssm -NssmPath $NssmPath -Arguments @('set', $Script:ServiceName, 'AppParameters', $appParams))
+
+# Read it back and assert the first token is the guard. nssm returns exit 0 for a
+# malformed value, so the exit code proves nothing here.
+$argvCheck = Invoke-Nssm -NssmPath $NssmPath -Arguments @('get', $Script:ServiceName, 'AppParameters') -Quiet
+$storedParams = ($argvCheck.StdOut + $argvCheck.StdErr).Trim()
+if ($storedParams -notlike "$guard*") {
+    throw "nssm stored AppParameters that do not begin with the boot guard. Stored: $storedParams"
+}
+if ($storedParams -notlike "*$($Script:BootGuardName)*") {
+    throw "AppParameters do not name the boot guard. Stored: $storedParams"
+}
+Write-Ok "AppParameters asserted: first token is the guard, tsx and prober paths preserved"
 
 [void](Invoke-Nssm -NssmPath $NssmPath -Arguments @('set', $Script:ServiceName, 'AppDirectory', $repoRoot))
 [void](Invoke-Nssm -NssmPath $NssmPath -Arguments @('set', $Script:ServiceName, 'DisplayName', 'Sovereign Host Prober (MCP measurement instrument)'))
@@ -368,7 +472,7 @@ Write-Ok "AppEnvironmentExtra written ($($envPairs.Count) variables, values not 
 # ---------------------------------------------------------------------------
 # 7. Account
 # ---------------------------------------------------------------------------
-Write-Step '7/8 Selecting the service account'
+Write-Step '7/9 Selecting the service account'
 
 # A Windows service that runs as an interactive user needs that user's PASSWORD
 # stored in the LSA secret store, so it can be logged on at boot with nobody
@@ -391,7 +495,7 @@ Write-Info "account candidates in order: $($attempts -join ' -> ')"
 # ---------------------------------------------------------------------------
 # 8. Free the port, start, verify
 # ---------------------------------------------------------------------------
-Write-Step '8/8 Starting the service and verifying the measurement instrument'
+Write-Step '8/9 Starting the service and verifying the measurement instrument'
 
 $listener = Get-PortListener -Port $Port
 if ($listener) {
@@ -493,6 +597,16 @@ if (-not $chosen) { throw "service would not start under any candidate account: 
 $summary['accountChosen'] = $chosen
 Write-Ok "service will run as: $chosen"
 
+# The account is only known AFTER the empirical selection, so expectations.json
+# is rewritten with the account the SCM actually accepted. The service account is
+# part of the measurement identity and belongs in the record.
+if ($expectPaths) {
+    $expectPaths['serviceAccount'] = $chosen
+    $null = Write-Expectations -ExpectedEnv $expectEnv -ServiceAccount $chosen `
+                                -MeasuredProfile $measuredProfile -ProfilePinned $profilePinned -Paths $expectPaths
+    Write-Ok "expectations updated with the account the SCM actually accepted: $chosen"
+}
+
 # --- report the identity the process ACTUALLY has, not the one configured ---
 $svcNow = Get-Service -Name $Script:ServiceName
 $health = Test-ProberHealth -Bind $Bind -Port $Port -TimeoutSec 5
@@ -528,6 +642,69 @@ try {
     $summary['total']  = 'UNKNOWN'
 }
 
+# ---------------------------------------------------------------------------
+# 9. Cold-boot resilience: the readiness record and the independent recovery path
+# ---------------------------------------------------------------------------
+Write-Step '9/9 Asserting the startup readiness record and registering the recovery path'
+
+# 9a. The wrapper must have written a record, and the record must not be FAIL.
+# Reading it back is what makes the self-test a GATE rather than a log line.
+$rd = Get-ReadinessRecord
+if ($null -eq $rd.Record) {
+    Write-Fail "the boot guard wrote no readiness record at $($rd.Path): $($rd.Error)"
+    $summary['readiness'] = 'ABSENT'
+} else {
+    $v = [string](Get-Prop $rd.Record 'verdict' 'UNKNOWN')
+    $summary['readiness'] = $v
+    $counts = Get-Prop (Get-Prop $rd.Record 'service') 'counts'
+    Write-Info "readiness record: $($rd.Path)"
+    Write-Info "verdict=$v  recordedAt=$(Get-Prop $rd.Record 'recordedAtUtc')  uptimeSecAtStart=$(Get-Prop (Get-Prop $rd.Record 'boot') 'uptimeSecAtStart')  bootId=$(Get-Prop (Get-Prop $rd.Record 'boot') 'bootId')"
+    Write-Info ("checks: total=$(Get-Prop $counts 'total') passed=$(Get-Prop $counts 'passed') failed=$(Get-Prop $counts 'failed')")
+    foreach ($c in @(Get-Prop (Get-Prop $rd.Record 'service') 'checks' @())) {
+        $mark = if ($c.ok) { '[ok]  ' } else { "[$($c.severity)]" }
+        Write-Info ("  {0} {1,-24} {2}" -f $mark, $c.name, $c.detail)
+    }
+    if ($v -eq 'FAIL') {
+        foreach ($c in @(Get-Prop (Get-Prop $rd.Record 'service') 'failedChecks' @())) { Write-Fail "$($c.severity): $($c.name) - $($c.detail)" }
+        Write-Fail 'the service started but its readiness verdict is FAIL. It is up, but it will measure wrongly.'
+    } elseif ($v -eq 'DEGRADED') {
+        foreach ($c in @(Get-Prop (Get-Prop $rd.Record 'service') 'failedChecks' @())) { Write-Warn "hazard at start: $($c.name) - $($c.detail)" }
+    } else {
+        Write-Ok 'readiness verdict READY - every cold-boot precondition existed at this start'
+    }
+}
+
+# 9b. The independent recovery path. Installed, then PROVEN idempotent by running
+# it twice and requiring the second run to be a recorded NO-OP.
+$recoveryInstaller = (Join-Path $PSScriptRoot 'install-recovery-task.ps1')
+if (Test-Path $recoveryInstaller) {
+    & $recoveryInstaller -ServiceName $Script:ServiceName -Port $Port -Bind $Bind -HealthTimeoutSec 90 | ForEach-Object { Write-Protected $_ }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "install-recovery-task.ps1 exited $LASTEXITCODE; the recovery path is NOT installed"
+        $summary['recoveryTask'] = 'INSTALL-FAILED'
+    } else {
+        $summary['recoveryTask'] = 'INSTALLED'
+        Write-Step 'Proving the recovery path is idempotent (run 1, then run 2)'
+        & (Join-Path $PSScriptRoot 'recover-prober.ps1') -ServiceName $Script:ServiceName -Port $Port -Bind $Bind -Trigger 'install-proof-run-1' | ForEach-Object { Write-Protected $_ }
+        $r1 = $LASTEXITCODE
+        & (Join-Path $PSScriptRoot 'recover-prober.ps1') -ServiceName $Script:ServiceName -Port $Port -Bind $Bind -Trigger 'install-proof-run-2' | ForEach-Object { Write-Protected $_ }
+        $r2 = $LASTEXITCODE
+        $rec2 = Get-Prop (Get-ReadinessRecord).Record 'recovery'
+        $action2 = [string](Get-Prop $rec2 'action' 'NONE')
+        Write-Info "run 1 exit=$r1, run 2 exit=$r2, last recorded action=$action2"
+        if ($r1 -eq 0 -and $r2 -eq 0 -and $action2 -eq 'NOOP_SERVICE_RUNNING') {
+            Write-Ok 'recovery path is idempotent: the second run was a recorded NO-OP with no side effect'
+            $summary['recoveryIdempotent'] = $true
+        } else {
+            Write-Warn "recovery idempotence not demonstrated: exits $r1/$r2, last action $action2"
+            $summary['recoveryIdempotent'] = $false
+        }
+    }
+} else {
+    Write-Warn "install-recovery-task.ps1 not found at $recoveryInstaller"
+    $summary['recoveryTask'] = 'SCRIPT-MISSING'
+}
+
 Write-Host ''
 Write-Host '================================================================' -ForegroundColor DarkGray
 Write-Host ' INSTALL SUMMARY' -ForegroundColor White
@@ -542,12 +719,16 @@ $cim   = Get-CimInstance Win32_Service -Filter "Name='$Script:ServiceName'"
 "  nssm.exe       : $NssmPath"
 "  application    : $NodeExe"
 "  arguments      : `"$tsxCli`" `"$prober`""
+"  wrapped by     : $guard  (runs the startup readiness self-test, then the prober unchanged)"
 "  working dir    : $repoRoot"
 "  token          : resolved from file, length=$($token.Length), value never printed"
 "  logs           : $logOut"
+"  readiness file : $Script:ReadinessFile"
+"  expectations   : $Script:ExpectationsFile"
 Write-Host ''
 Write-Host '  Next: .\verify.ps1          (read-only, exits non-zero on any failure)'
 Write-Host '        .\verify.ps1 -SelfHealTest   (kills the prober and measures recovery)'
+Write-Host '        .\boot-verdict.ps1           (the BOOT OK / BOOT FAILED command)'
 Write-Host '        .\uninstall.ps1        (fully reversible removal)'
 Write-Host ''
 

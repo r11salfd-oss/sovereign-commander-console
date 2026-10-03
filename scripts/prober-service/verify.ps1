@@ -15,6 +15,18 @@
       7  AUTHENTICATED /probe/mcp/status returns a real measurement
       8  the console reads it: /api/agents/framework reports
          healthScoreBasis.mcpSource = HOST_PROBER_MEASURED
+      9  COLD-BOOT RESILIENCE, PART A: the startup readiness self-test ran, the
+         readiness record exists, its verdict is not FAIL, its boot evidence
+         belongs to THIS boot, and the wrapper is on the service command line
+     10  COLD-BOOT RESILIENCE, PART B: the independent recovery task is
+         registered, is wired to the recovery script as SYSTEM at logon, and is
+         a proven NO-OP when the service is already healthy
+     11  COLD-BOOT RESILIENCE, PART C: boot-verdict.ps1 runs and returns a
+         decision (its BOOT OK / BOOT FAILED line is quoted)
+
+    Checks 9-11 are about the CHAIN, not about the instrument. A service that is
+    running right now proves nothing about whether it comes up after a power
+    cycle, and check 9 says so explicitly rather than implying otherwise.
 
     With -SelfHealTest it additionally kills the prober's node process and
     measures how long NSSM takes to bring it back and for the console score to
@@ -212,15 +224,179 @@ if (-not $c.ok) {
     Write-Info "rationale: $($d.healthScoreBasis.rationale)"
 }
 
-# --- optional destructive self-heal proof -----------------------------------
+# ---------------------------------------------------------------------------
+# 9  COLD-BOOT RESILIANCE, PART A - the startup readiness self-test
+# ---------------------------------------------------------------------------
+Write-Step '9  cold-boot readiness self-test (Part A)'
+$guardPath = Get-BootGuardPath
+Check 'boot guard present' (Test-Path $guardPath) $guardPath
+
+if ($nssm) {
+    $argvGuard = Invoke-Nssm -NssmPath $nssm -Arguments @('get', $Script:ServiceName, 'AppParameters') -Quiet
+    $paramsText = (Protect-Secret ($argvGuard.StdOut + $argvGuard.StdErr)).Trim()
+    # Assert the WRAPPER is on the command line, not just that some parameters
+    # exist. A service running node directly would pass every other check here.
+    Check 'wrapper on the service command line' ($paramsText -like "*$($Script:BootGuardName)*") "AppParameters=$paramsText"
+    Check 'readiness path on the command line' ($paramsText -like "*$($Script:ReadinessFile)*") "AppParameters=$paramsText"
+} else {
+    Check 'nssm readable for AppParameters' $false 'nssm.exe not found'
+}
+
+$rd = Get-ReadinessRecord
+if ($null -eq $rd.Record) {
+    Check 'readiness record exists' $false "no usable record at $($rd.Path): $($rd.Error)"
+    Check 'readiness verdict' $false 'cannot assert a verdict on a record that does not exist'
+} else {
+    $rec = $rd.Record
+    $verdict = [string](Get-Prop $rec 'verdict' 'UNKNOWN')
+    $rBoot = Get-Prop $rec 'boot'
+    $rSvc = Get-Prop $rec 'service'
+    $counts = Get-Prop $rSvc 'counts'
+    Write-Host "    record : $($rd.Path)" -ForegroundColor DarkGray
+    Write-Host "    verdict: $verdict   recordedAt=$(Get-Prop $rec 'recordedAtUtc')" -ForegroundColor DarkGray
+    Write-Host "    checks : total=$(Get-Prop $counts 'total') passed=$(Get-Prop $counts 'passed') failed=$(Get-Prop $counts 'failed') blockers=$(Get-Prop $counts 'blockers') required=$(Get-Prop $counts 'required') advisory=$(Get-Prop $counts 'advisory')" -ForegroundColor DarkGray
+    foreach ($c in @(Get-Prop $rSvc 'checks' @())) {
+        $mark = if ($c.ok) { '[ok]  ' } else { "[$($c.severity)]" }
+        Write-Host ("      {0} {1,-24} {2}" -f $mark, $c.name, $c.detail) -ForegroundColor DarkGray
+    }
+
+    Check 'readiness record exists' $true "verdict=$verdict at $($rd.Path)"
+    Check 'readiness verdict not FAIL' ($verdict -in @('READY', 'DEGRADED')) "verdict=$verdict (DEGRADED means a boot hazard was present and is named below)"
+    Check 'readiness record is complete' ((Get-Prop $counts 'total') -ge 7 -and $null -ne (Get-Prop $counts 'passed')) "$(Get-Prop $counts 'total') checks recorded, $(Get-Prop $counts 'passed') passed"
+
+    # Boot evidence: the record must belong to THIS boot, and must say so.
+    $bootNow = Get-BootIdentity
+    $recBootId = Get-Prop $rBoot 'bootId'
+    $uptimeAtStart = Get-Prop $rBoot 'uptimeSecAtStart'
+    Check 'record belongs to this boot' (
+        ($null -eq $recBootId -or $null -eq $bootNow.BootId -or [int]$recBootId -eq [int]$bootNow.BootId)
+    ) "record BootId=$recBootId, machine BootId=$($bootNow.BootId), uptime now=$($bootNow.UptimeSec)s"
+
+    if ($null -ne $uptimeAtStart) {
+        if ([double]$uptimeAtStart -le 900) {
+            Check 'this start happened at boot' $true "the prober recorded its readiness $([int]$uptimeAtStart)s after power-on (window 900s)"
+        } else {
+            Write-Warn "the prober recorded its readiness $([int]$uptimeAtStart)s after power-on, which is OUTSIDE the 900s startup window."
+            Write-Warn '=> the service was started BY HAND. The boot path remains UNVERIFIED for this start.'
+            Write-Warn '=> A power cycle, or boot-verdict.ps1 immediately after one, is the only thing that can close this link.'
+            Check 'this start happened at boot' $false "uptimeSecAtStart=$uptimeAtStart > 900s"
+        }
+    } else {
+        Check 'this start happened at boot' $false 'the record carries no uptimeSecAtStart'
+    }
+
+    # The hazards the record must be able to speak about at all.
+    $checkNames = @(Get-Prop $rSvc 'checks' @() | ForEach-Object { $_.name })
+    foreach ($must in @('account', 'serverRoot', 'pinnedEnvironment', 'runtimeEntries', 'workingDirectoryAndPath', 'dockerGateway')) {
+        Check "record covers hazard '$must'" ($checkNames -contains $must) "present=$($checkNames -contains $must)"
+    }
+}
+
+# The 401 gate has not been weakened by anything in this file. Re-asserted here
+# next to the new code so a future change to the auth gate cannot hide behind a
+# passing readiness verdict.
+$rec401 = 0
+try {
+    $r401 = Invoke-WebRequest -Uri "http://$Bind`:$Port/probe/mcp/status" -UseBasicParsing -TimeoutSec 10
+    $rec401 = [int]$r401.StatusCode
+} catch { $rec401 = [int]$_.Exception.Response.StatusCode }
+Check 'auth gate still closed after resilience work' ($rec401 -eq 401) "unauthenticated /probe/mcp/status -> $rec401"
+
+# ---------------------------------------------------------------------------
+# 10  COLD-BOOT RESILIENCE, PART B - the independent recovery path
+# ---------------------------------------------------------------------------
+Write-Step '10 independent recovery path (Part B)'
+$taskName = Get-RecoveryTaskName
+$task = Get-RecoveryTask
+if (-not $task) {
+    Check 'recovery task registered' $false "no task at $taskName. Install it with .\install-recovery-task.ps1"
+    Check 'recovery task wiring' $false 'task absent, wiring cannot be asserted'
+} else {
+    Check 'recovery task registered' $true "$taskName state=$($task.State)"
+    $a = @($task.Actions)[0]
+    Check 'recovery action is the recovery script' ("$($a.Arguments)" -like '*recover-prober.ps1*') "$($a.Execute) $($a.Arguments)"
+    Check 'recovery action runs at the service' ("$($a.Arguments)" -like "*-ServiceName $Script:ServiceName*") "$($a.Arguments)"
+    Check 'recovery principal is SYSTEM' ("$($task.Principal.UserId)" -match 'SYSTEM') "$($task.Principal.UserId)"
+    Check 'recovery run level is Highest' ("$($task.Principal.RunLevel)" -eq 'Highest') "$($task.Principal.RunLevel)"
+    Check 'recovery trigger is AtLogOn' (@($task.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' }).Count -gt 0) (($task.Triggers | ForEach-Object { "$($_.CimClass.CimClassName)(user=$($_.UserId))" }) -join ', ')
+
+    # Idempotence, proven by execution and asserted here so a regression is caught.
+    # The service is Running and healthy at this point, so the recovery script is
+    # REQUIRED to be a no-op. If it touched anything, this check fails.
+    $before = (Get-CimInstance Win32_Service -Filter "Name='$Script:ServiceName'").ProcessId
+    Write-Info 'running recover-prober.ps1 twice; the service is Running and healthy, so both runs must be recorded NO-OPS'
+    $recScript = Get-RecoveryScriptPath
+    $out1 = Invoke-Native -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+                          -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $recScript, '-ServiceName', $Script:ServiceName, '-Port', "$Port", '-Bind', $Bind, '-Trigger', 'verify-run-1') -Quiet
+    $out2 = Invoke-Native -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+                          -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $recScript, '-ServiceName', $Script:ServiceName, '-Port', "$Port", '-Bind', $Bind, '-Trigger', 'verify-run-2') -Quiet
+    $after = (Get-CimInstance Win32_Service -Filter "Name='$Script:ServiceName'").ProcessId
+    Write-Host "    run1 exit=$($out1.ExitCode)  run2 exit=$($out2.ExitCode)" -ForegroundColor DarkGray
+    Check 'recovery run 1 exit 0' ($out1.ExitCode -eq 0) (Protect-Secret $out1.Combined)
+    Check 'recovery run 2 exit 0' ($out2.ExitCode -eq 0) (Protect-Secret $out2.Combined)
+    Check 'recovery did not restart a healthy service' ($before -eq $after) "service pid before=$before after=$after (identical means nothing was killed or restarted)"
+
+    $rd3 = Get-ReadinessRecord
+    $lastRecovery = Get-Prop $rd3.Record 'recovery'
+    $lastAction = [string](Get-Prop $lastRecovery 'action' 'NONE')
+    Check 'last recovery attempt recorded as NO-OP' ($lastAction -eq 'NOOP_SERVICE_RUNNING') "action=$lastAction verdict=$(Get-Prop $lastRecovery 'verdict') trigger=$(Get-Prop $lastRecovery 'trigger') at=$(Get-Prop $lastRecovery 'atUtc')"
+}
+
+# ---------------------------------------------------------------------------
+# 11  COLD-BOOT RESILIENCE, PART C - the one command
+# ---------------------------------------------------------------------------
+Write-Step '11 boot verdict command (Part C)'
+$verdictScript = Join-Path $PSScriptRoot 'boot-verdict.ps1'
+if (-not (Test-Path $verdictScript)) {
+    Check 'boot-verdict.ps1 present' $false "not found at $verdictScript"
+} else {
+    Check 'boot-verdict.ps1 present' $true $verdictScript
+    $bv = Invoke-Native -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+                        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $verdictScript, '-Json') -Quiet
+    $verdictLine = ''
+    $parsed = $null
+    try { $parsed = $bv.StdOut | ConvertFrom-Json } catch { $parsed = $null }
+    if ($parsed) {
+        $verdictLine = [string](Get-Prop $parsed 'verdict' 'NONE')
+        Write-Host "    boot-verdict.ps1 -> $($verdictLine)  (exit $($bv.ExitCode))" -ForegroundColor DarkGray
+        Write-Host "    startedAtBoot=$((Get-Prop $parsed 'startedAtBoot'))  readinessVerdict=$(Get-Prop $parsed 'readinessVerdict')" -ForegroundColor DarkGray
+        foreach ($r in @(Get-Prop $parsed 'reasons' @())) { Write-Host "    FAILED: $r" -ForegroundColor DarkGray }
+        foreach ($n in @(Get-Prop $parsed 'notes' @())) { Write-Host "    note  : $n" -ForegroundColor DarkGray }
+    } else {
+        Write-Host (Protect-Secret $bv.Combined) -ForegroundColor DarkGray
+    }
+    Check 'boot-verdict.ps1 returns a decision' ($bv.ExitCode -in @(0, 1) -and $verdictLine -in @('BOOT OK', 'BOOT FAILED')) "exit=$($bv.ExitCode) verdict=$verdictLine"
+    # This is a link in the chain, and it is reported honestly: the tool exists
+    # and produces a decision, but until a power cycle happens the decision it
+    # produces for a hand-started service is BOOT FAILED, correctly, because the
+    # boot start never happened.
+    $b = Get-Prop $parsed 'startedAtBoot'
+    if ($b -eq $true) {
+        Check 'boot start proven by the readiness record' $true "uptimeSecAtStart within the startup window"
+    } else {
+        Write-Warn 'BOOT START NOT PROVEN on this machine: no power cycle has produced a readiness record yet.'
+        Write-Warn 'This is reported as UNVERIFIED on purpose. boot-verdict.ps1 will close it the first time it runs after a reboot.'
+    }
+}
+
+# ---------------------------------------------------------------------------
+# optional destructive self-heal proof
+# ---------------------------------------------------------------------------
 if ($SelfHealTest) {
     Write-Step 'SELF-HEAL TEST (destructive but bounded)'
     $procId = $cim.ProcessId
     Write-Info "NSSM service pid = $procId"
     $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$procId" -ErrorAction SilentlyContinue
-    $victim = $children | Where-Object { $_.CommandLine -like '*host_prober.ts*' } | Select-Object -First 1
+    # With the wrapper in place, NSSM's direct child is the WRAPPER, and the
+    # wrapper's command line also contains "host_prober.ts". Matching on the
+    # filename alone would therefore have killed the wrapper instead of the
+    # prober, and the test would silently stop testing what it claims to test.
+    # The wrapper is excluded BY NAME and the innermost prober is selected.
+    $wrapper = $children | Where-Object { $_.CommandLine -and $_.CommandLine -like "*$($Script:BootGuardName)*" } | Select-Object -First 1
+    $victim = $children | Where-Object { $_.CommandLine -and $_.CommandLine -like '*host_prober.ts*' -and (-not $wrapper -or $_.ProcessId -ne $wrapper.ProcessId) } | Select-Object -First 1
+    if ($wrapper) { Write-Info "boot guard pid = $($wrapper.ProcessId) (the crash target is chosen BELOW it, so the test still measures the prober's own recovery)" }
     if (-not $victim) {
-        Check 'found prober child of nssm' $false "no child of pid $procId references host_prober.ts"
+        Check 'found prober child of nssm' $false "no child of pid $procId references host_prober.ts other than the wrapper"
     } else {
         $victimPid = $victim.ProcessId
         Write-Info "prober node pid = $victimPid"

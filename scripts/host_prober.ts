@@ -915,12 +915,52 @@ export function buildInventory(config: ProberConfig): Inventory {
  * NAMES are forwarded, and their VALUES are never logged, never returned, and
  * never included in any `reasonText`.
  */
+/**
+ * `[environment variable naming the file, environment variable to fill]`.
+ *
+ * A child process gets the VALUE, read from the file at spawn time; the parent
+ * carries only the PATH. This is the `SOVEREIGN_CLI_TOKEN_FILE` pattern already
+ * used inside the container, applied to the host prober's children.
+ */
+const FILE_BACKED_CHILD_SECRETS: ReadonlyArray<readonly [string, string]> = [
+  ['GITHUB_PERSONAL_ACCESS_TOKEN_FILE', 'GITHUB_PERSONAL_ACCESS_TOKEN'],
+];
+
 function buildChildEnv(passEnv: readonly string[]): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = {};
   const allowed = new Set<string>([...GLOBAL_ENV_ALLOWLIST, ...passEnv]);
   for (const name of allowed) {
     const value = process.env[name];
     if (typeof value === 'string') childEnv[name] = value;
+  }
+  // File-backed credentials. Same reasoning as HOST_PROBER_TOKEN_FILE: a literal
+  // in a service's environment is readable by anyone who can read the service
+  // configuration — measured, not assumed. A child that needs a secret is given
+  // the value read from a file the operator controls; the FILE PATH travels in
+  // the environment, never the value.
+  //
+  // Measured on this host: the GitHub MCP server reports ONLINE with 45 tools
+  // even when no GitHub credential reaches it, because `initialize` and
+  // `tools/list` are protocol methods that do not authenticate. Reachability is
+  // therefore not evidence of capability, and a service that had no GitHub token
+  // still looked healthy. This indirection is what closes that gap.
+  for (const [fileVar, valueVar] of FILE_BACKED_CHILD_SECRETS) {
+    const filePath = process.env[fileVar];
+    if (typeof filePath !== 'string' || filePath.trim().length === 0) continue;
+    try {
+      const secret = readFileSync(filePath.trim(), 'utf8').trim();
+      // `NAME=value` form is tolerated so an operator can point at an existing
+      // .env file rather than having to strip it by hand.
+      const eq = secret.indexOf('=');
+      const resolved = eq > 0 && !secret.startsWith('github_pat_') && !secret.startsWith('gh')
+        ? secret.slice(eq + 1).trim()
+        : secret;
+      if (resolved.length > 0) childEnv[valueVar] = resolved;
+    } catch {
+      // An unreadable secret file yields NO variable. The child then fails
+      // closed on its own side, which is the correct direction: a missing
+      // credential must never become a silent success.
+    }
   }
   // Some Windows runtimes fail to start a console process without these; they
   // are directory/OS facts, never credentials.
