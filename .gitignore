@@ -6,6 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+*.token
+secrets/
 scratch/
 screenshots/
 
