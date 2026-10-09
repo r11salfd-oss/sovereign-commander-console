@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { collection, onSnapshot, query, where, orderBy, getDocs, doc, writeBatch, deleteDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, doc, updateDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import Header from '../components/Header';
 import BrainMap from '../components/BrainMap';
@@ -11,7 +11,7 @@ import Footer from '../components/Footer';
 import InputDock from '../components/capsule/InputDock';
 import WorkspaceBrowser from '../components/capsule/WorkspaceBrowser';
 import { Approval, BrainMap as BrainMapType, AuditStatus } from '../types';
-import { Activity, ShieldAlert, Terminal, RefreshCw, X } from 'lucide-react';
+import { ShieldAlert, RefreshCw, X } from 'lucide-react';
 import { useWorkspace } from '../hooks/useWorkspace';
 import RealTimeEventLogger, { LogEvent } from '../components/RealTimeEventLogger';
 

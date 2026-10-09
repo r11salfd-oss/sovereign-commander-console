@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: Sovereign Console Server (Node/TSX)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "server.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Debug: SQL Architecture Verifier (Python)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/sql_architecture_verifier.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug: Sovereign Governance Engine (Python)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/sovereign_governance_engine.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug: Run Master Test Suite (TSX)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "run-master-tests.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
+}

@@ -15,7 +15,6 @@ import {
   Terminal, 
   History, 
   Trash2, 
-  RefreshCw, 
   Layers, 
   Cpu, 
   MessageSquare,
@@ -26,8 +25,6 @@ import {
   Paperclip,
   X,
   Maximize2,
-  Eye,
-  FileCheck,
   ShieldAlert,
   ArrowDown
 } from 'lucide-react';

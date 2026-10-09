@@ -1,0 +1,62 @@
+# ============================================================================
+# SOVEREIGN COMMANDER CONSOLE - LOCAL PROTOTYPING SEED DATA
+# Local emulator only - No authorization directives required
+# Chain Key ID: 360ea36c28e66d9d
+# ============================================================================
+
+mutation SeedSovereignData @transaction {
+  # 1. Seed Supreme Commander User
+  user_insert(data: {
+    uid: "commander_seed_001",
+    email: "commander@sovereign.mesh",
+    displayName: "القائد العام للأسطول السيادي",
+    role: "supreme_commander"
+  })
+
+  # 2. Seed Initial Cryptographic Audit Block
+  sovereignAuditBlock_insert(data: {
+    id: "00000000-0000-0000-0000-000000000001",
+    blockIndex: 1,
+    previousHash: "0000000000000000000000000000000000000000000000000000000000000000",
+    currentHash: "360ea36c28e66d9d784a91b2c3d4e5f60718293a4b5c6d7e8f90123456789abc",
+    merkleRoot: "a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0",
+    eventType: "GENESIS_BOOTSTRAP",
+    originAgent: "sentinel",
+    payloadJson: "{\"system\": \"Sovereign Commander Console\", \"governance\": \"Active\"}",
+    signature: "SIG-ED25519-GENESIS-360EA36C28E66D9D"
+  })
+
+  # 3. Seed Sovereign HITL Approval Proposals
+  sovereignApproval_insert(data: {
+    id: "00000000-0000-0000-0000-000000000002",
+    creator: { uid: "commander_seed_001" },
+    agentId: "forge-ast-agent",
+    actionType: "PROD_SCHEMA_MIGRATION",
+    status: "pending",
+    risk: "high",
+    summary: "اعتماد وتطبيق جداول Firebase SQL Connect في قاعدة PostgreSQL السحابية",
+    reason: "تأسيس النواة العلائقية وتفعيل استعلامات GraphQL ذات الحماية على مستوى الصفوف",
+    expiresAt: "2026-10-01T00:00:00Z"
+  })
+
+  # 4. Seed Sovereign Chat Session & Conversation
+  sovereignChatSession_insert(data: {
+    id: "00000000-0000-0000-0000-000000000003",
+    creator: { uid: "commander_seed_001" },
+    title: "جلسة الاستشارة الهندسية التأسيسية",
+    chatMode: "council",
+    selectedAgent: "lead-engineer",
+    selectedCouncilJson: "[\"lead-engineer\", \"architect-agent\", \"sentinel-agent\"]",
+    lastMessage: "تم تدشين جسر Firebase SQL Connect بنجاح مع قاعدة البيانات العلائقية."
+  })
+
+  # 5. Seed Chat Message
+  sovereignChatMessage_insert(data: {
+    id: "00000000-0000-0000-0000-000000000004",
+    session: { id: "00000000-0000-0000-0000-000000000003" },
+    sender: "agent",
+    agent: "lead-engineer",
+    modelRole: "كبير المهندسين المعماريين",
+    text: "تحية طيبة أيها القائد. منظومة Firebase SQL Connect جاهزة الآن للاستعلامات الآمنة."
+  })
+}

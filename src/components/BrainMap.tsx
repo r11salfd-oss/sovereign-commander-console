@@ -1,5 +1,4 @@
-import React from 'react';
-import { Brain, Cpu, ShieldCheck, Sparkles, Terminal } from 'lucide-react';
+import { Brain, ShieldCheck, Sparkles, Terminal } from 'lucide-react';
 import { BrainMap as BrainMapType } from '../types';
 
 interface BrainMapProps {
@@ -69,7 +68,7 @@ export default function BrainMap({ modelMap, loading }: BrainMapProps) {
           </h2>
           <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 px-2 py-0.5 rounded">
             <Sparkles className="w-3 h-3 text-emerald-400" />
-            <span>ANTIGRAVITY ACTIVE</span>
+            <span>{loading ? 'SYNCING MATRIX...' : 'ANTIGRAVITY ACTIVE'}</span>
           </span>
         </div>
 

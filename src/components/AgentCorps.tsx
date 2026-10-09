@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Brain, Hammer, Zap, Flame, Scale, Terminal, Activity, RefreshCw } from 'lucide-react';
+import { Shield, Brain, Hammer, Zap, Flame, Scale, Terminal, RefreshCw } from 'lucide-react';
 import { useSystemTelemetry } from '../hooks/useSystemTelemetry';
 
 interface HourlyDataPoint {

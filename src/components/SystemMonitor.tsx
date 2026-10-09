@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Activity, 
-  Wifi, 
   Cpu, 
   Database, 
   Radio, 
@@ -10,13 +9,10 @@ import {
   ChevronDown, 
   HardDrive,
   Clock,
-  Layers,
   ExternalLink,
-  Zap,
   Server,
   AlertTriangle,
   Sliders,
-  Flame,
   CheckCircle2
 } from 'lucide-react';
 import { useSystemTelemetry } from '../hooks/useSystemTelemetry';

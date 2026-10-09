@@ -12,13 +12,10 @@ import {
   Cpu, 
   Sparkles, 
   Bot, 
-  Clock, 
-  FileText, 
   Download, 
   ChevronRight, 
   ChevronDown, 
   Filter, 
-  AlertTriangle,
   Zap,
   Hammer,
   Shield,
@@ -26,9 +23,6 @@ import {
   UploadCloud,
   CheckSquare,
   Flame,
-  KeyRound,
-  Lock,
-  Radio,
   Eye
 } from 'lucide-react';
 import { 
@@ -37,9 +31,7 @@ import {
   executeSingleAutomatedTest,
   AutomatedTestRunReport, 
   DEPARTMENT_NAMES_AR,
-  TestCase,
-  TestResultItem,
-  SubAssertion 
+  TestResultItem
 } from '../services/testAutomationSuite';
 import { db, auth } from '../firebase';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Zap, Code, Terminal, Copy, Check, Send, CheckSquare, Play, Sparkles, FileCode } from 'lucide-react';
+import { Zap, Code, Copy, Check, CheckSquare, Sparkles, FileCode } from 'lucide-react';
 import { getGoogleAuthHeaders, db, auth } from '../firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import { Approval } from '../types';

@@ -1,26 +1,25 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { 
-  Terminal, 
-  MessageSquare, 
-  UploadCloud, 
-  Shield, 
-  CheckSquare, 
-  Users, 
-  Zap, 
-  Code, 
-  ShieldAlert, 
-  LogOut, 
-  Cpu, 
+import {
+  Terminal,
+  MessageSquare,
+  UploadCloud,
+  Shield,
+  CheckSquare,
+  Users,
+  Zap,
+  Code,
+  ShieldAlert,
+  LogOut,
+  Cpu,
   CheckCheck,
   ChevronLeft,
   ChevronRight,
-  Activity,
   Sparkles,
   AlertTriangle,
   Search
 } from 'lucide-react';
-import { auth, logoutUser } from '../firebase';
+import { auth, logoutUser, loginWithGoogle } from '../firebase';
 import { User } from 'firebase/auth';
 import TelemetryDiagnosticsModal from './TelemetryDiagnosticsModal';
 import SystemMonitor, { LatencyThresholdAlert } from './SystemMonitor';
@@ -85,7 +84,7 @@ export default function TopNavigationBar() {
       try {
         const saved = localStorage.getItem('sovereign_local_commander') || sessionStorage.getItem('sovereign_local_commander');
         if (saved) return JSON.parse(saved);
-      } catch (e) {}
+      } catch (e) { }
       return null;
     };
     const localU = checkLocalUser();
@@ -143,6 +142,7 @@ export default function TopNavigationBar() {
 
   // Mouse drag-to-scroll handlers
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     const el = navScrollRef.current;
     if (!el) return;
     isDraggingRef.current = true;
@@ -156,20 +156,24 @@ export default function TopNavigationBar() {
     const el = navScrollRef.current;
     if (!el) return;
     const currentX = e.pageX - el.offsetLeft;
-    const walk = (currentX - startXRef.current) * 1.3;
-    if (Math.abs(walk) > 4) {
+    const diff = currentX - startXRef.current;
+    if (Math.abs(diff) > 25) {
       hasDraggedRef.current = true;
+      el.scrollLeft = startScrollLeftRef.current - diff * 1.2;
+      updateScrollIndicators();
     }
-    el.scrollLeft = startScrollLeftRef.current - walk;
-    updateScrollIndicators();
   };
 
   const handleMouseUp = () => {
     isDraggingRef.current = false;
+    setTimeout(() => {
+      hasDraggedRef.current = false;
+    }, 40);
   };
 
   const handleMouseLeave = () => {
     isDraggingRef.current = false;
+    hasDraggedRef.current = false;
   };
 
   // Auto-scroll active item into visible center on route change
@@ -189,28 +193,27 @@ export default function TopNavigationBar() {
 
   return (
     <>
-      <header className={`sticky top-0 z-50 w-full select-none shadow-[0_6px_25px_rgba(0,0,0,0.65)] bg-[#070b13] border-b transition-all duration-300 relative ${
-        isAlertTriggered 
-          ? isCritical 
-            ? 'border-b-2 border-b-rose-500 shadow-[0_4px_30px_rgba(244,63,94,0.45)] ring-1 ring-rose-500/50' 
+      <header className={`sticky top-0 z-50 w-full select-none shadow-[0_6px_25px_rgba(0,0,0,0.65)] bg-[#070b13] border-b transition-all duration-300 ${isAlertTriggered
+          ? isCritical
+            ? 'border-b-2 border-b-rose-500 shadow-[0_4px_30px_rgba(244,63,94,0.45)] ring-1 ring-rose-500/50'
             : 'border-b-2 border-b-amber-500 shadow-[0_4px_22px_rgba(245,158,11,0.35)] ring-1 ring-amber-500/40'
           : 'border-slate-800/90'
-      }`}>
-        
+        }`}>
+
         {/* Animated Top Perimeter Warning Pulse Beam when Latency Exceeds Safety Parameters */}
         {isAlertTriggered && (
           <div 
             className={`absolute top-0 left-0 right-0 h-1 z-50 pointer-events-none animate-pulse ${
               isCritical 
-                ? 'bg-gradient-to-r from-rose-600 via-amber-400 to-rose-600 shadow-[0_0_15px_#f43f5e]' 
-                : 'bg-gradient-to-r from-amber-500 via-yellow-300 to-amber-500 shadow-[0_0_12px_#f59e0b]'
+                ? 'bg-linear-to-r from-rose-600 via-amber-400 to-rose-600 shadow-[0_0_15px_#f43f5e]' 
+                : 'bg-linear-to-r from-amber-500 via-yellow-300 to-amber-500 shadow-[0_0_12px_#f59e0b]'
             }`} 
           />
         )}
 
         {/* ── TIER 1: System Status, Tools, Search, & User Identity ── */}
         <div className="px-3 sm:px-4 py-1.5 flex items-center justify-between gap-3 border-b border-slate-800/80 bg-[#090e18] text-xs font-mono">
-          
+
           {/* Brand Identity / Logo */}
           <Link to="/commander" className="flex items-center gap-2 group cursor-pointer shrink-0">
             <div className="p-1.5 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-400 group-hover:border-cyan-400 group-hover:shadow-[0_0_12px_rgba(34,211,238,0.35)] transition">
@@ -219,7 +222,7 @@ export default function TopNavigationBar() {
             <div className="flex flex-col">
               <div className="text-xs font-bold font-sans text-white tracking-wide flex items-center gap-1.5">
                 <span>Sovereign Commander</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">v3.8</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">v3.8</span>
               </div>
               <span className="text-[10px] text-cyan-400/80 font-mono hidden sm:inline">مركز التحكم والقيادة السيادي</span>
             </div>
@@ -227,7 +230,7 @@ export default function TopNavigationBar() {
 
           {/* Right Action Tools: Search, Telemetry, Voice, Account */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            
+
             {/* Command Palette Trigger Button (Ctrl+K) */}
             <button
               type="button"
@@ -243,19 +246,18 @@ export default function TopNavigationBar() {
             </button>
 
             {/* Real-time State-driven System Health Monitor with Threshold Alerting */}
-            <SystemMonitor 
+            <SystemMonitor
               onAlertChange={setLatencyAlert}
-              onOpenDiagnostics={() => setIsDiagnosticsOpen(true)} 
+              onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
             />
 
             {/* Visual Alert Pulse Pill (Visible in top bar when threshold exceeded) */}
             {isAlertTriggered && (
-              <div 
-                className={`hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-bold animate-pulse ${
-                  isCritical 
-                    ? 'bg-rose-950/80 border-rose-500 text-rose-200 shadow-[0_0_12px_rgba(244,63,94,0.6)]' 
+              <div
+                className={`hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-bold animate-pulse ${isCritical
+                    ? 'bg-rose-950/80 border-rose-500 text-rose-200 shadow-[0_0_12px_rgba(244,63,94,0.6)]'
                     : 'bg-amber-950/80 border-amber-500 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.5)]'
-                }`}
+                  }`}
                 title={latencyAlert.message}
               >
                 <AlertTriangle className="w-3 h-3 text-rose-400 animate-bounce" />
@@ -281,16 +283,16 @@ export default function TopNavigationBar() {
             {/* User Account or Login Button */}
             {currentUser ? (
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <div 
+                <div
                   className="flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-950/40 border border-cyan-500/40 text-cyan-300 text-[10px] sm:text-[11px]"
                   title={`المستخدم المسجل: ${currentUser.email || ''}`}
                 >
-                  <span className="truncate max-w-[90px] sm:max-w-[150px]">
+                  <span className="truncate max-w-22.5 sm:max-w-37.5">
                     {currentUser.email}
                   </span>
                 </div>
-                <button 
-                  onClick={() => logoutUser()} 
+                <button
+                  onClick={() => logoutUser()}
                   title="تسجيل الخروج (Sign Out)"
                   className="flex items-center gap-1 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg bg-rose-950/40 border border-rose-800/60 text-rose-300 hover:text-white hover:bg-rose-900/70 hover:border-rose-600 transition text-[10px] sm:text-[11px] font-bold cursor-pointer shadow active:scale-95"
                 >
@@ -299,10 +301,9 @@ export default function TopNavigationBar() {
                 </button>
               </div>
             ) : (
-              <button 
+              <button
                 onClick={async () => {
                   try {
-                    const { loginWithGoogle } = await import('../firebase');
                     await loginWithGoogle();
                   } catch (e: any) {
                     console.error('Login error:', e);
@@ -318,21 +319,20 @@ export default function TopNavigationBar() {
 
         {/* ── TIER 2: Spacious Full-Width Navigation Bar ── */}
         <div className="relative w-full bg-[#080d16] px-2 py-1.5 flex items-center shadow-inner">
-          
+
           {/* Left Scroll Arrow Button */}
           <button
             onClick={() => handleScroll('left')}
             aria-label="تمرير لليسار"
             title="تمرير القائمة لليسار"
-            className={`shrink-0 z-20 w-8 h-8 rounded-lg bg-[#0e1728] border border-cyan-500/40 text-cyan-300 hover:text-white hover:bg-cyan-950 hover:border-cyan-400 flex items-center justify-center transition shadow-md cursor-pointer ml-1 active:scale-90 ${
-              !canScrollLeft ? 'opacity-50 hover:border-cyan-500/30' : 'opacity-100'
-            }`}
+            className={`shrink-0 z-20 w-8 h-8 rounded-lg bg-[#0e1728] border border-cyan-500/40 text-cyan-300 hover:text-white hover:bg-cyan-950 hover:border-cyan-400 flex items-center justify-center transition shadow-md cursor-pointer ml-1 active:scale-90 ${!canScrollLeft ? 'opacity-50 hover:border-cyan-500/30' : 'opacity-100'
+              }`}
           >
             <ChevronRight className="w-4 h-4" />
           </button>
 
           {/* Full-Width Scrollable Container with Smooth Touch, Drag, & Wheel Support */}
-          <div 
+          <div
             ref={navScrollRef}
             onWheel={handleWheel}
             onScroll={updateScrollIndicators}
@@ -341,10 +341,10 @@ export default function TopNavigationBar() {
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseLeave}
             className="flex-1 min-w-0 overflow-x-auto scrollbar-none flex items-center gap-2 py-0.5 px-2 cursor-grab active:cursor-grabbing scroll-smooth"
-            style={{ 
-              scrollbarWidth: 'none', 
+            style={{
+              scrollbarWidth: 'none',
               msOverflowStyle: 'none',
-              WebkitOverflowScrolling: 'touch' 
+              WebkitOverflowScrolling: 'touch'
             }}
           >
             {NAV_ITEMS.map((item) => {
@@ -359,13 +359,13 @@ export default function TopNavigationBar() {
                     onClick={(e) => {
                       if (hasDraggedRef.current) {
                         e.preventDefault();
+                        hasDraggedRef.current = false;
                       }
                     }}
-                    className={`flex flex-shrink-0 items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all duration-200 font-mono text-xs border ${
-                      isActive 
-                        ? 'bg-cyan-950/80 text-cyan-200 border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.3)] font-bold ring-1 ring-cyan-400/50' 
+                    className={`flex shrink-0 items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all duration-200 font-mono text-xs border ${isActive
+                        ? 'bg-cyan-950/80 text-cyan-200 border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.3)] font-bold ring-1 ring-cyan-400/50'
                         : 'bg-slate-900/60 text-slate-300 border-slate-800 hover:bg-slate-800/90 hover:text-cyan-300 hover:border-cyan-500/40'
-                    }`}
+                      }`}
                   >
                     <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
                     <div className="flex items-center gap-1.5 whitespace-nowrap">
@@ -389,9 +389,8 @@ export default function TopNavigationBar() {
             onClick={() => handleScroll('right')}
             aria-label="تمرير لليمين"
             title="تمرير القائمة لليمين"
-            className={`shrink-0 z-20 w-8 h-8 rounded-lg bg-[#0e1728] border border-cyan-500/40 text-cyan-300 hover:text-white hover:bg-cyan-950 hover:border-cyan-400 flex items-center justify-center transition shadow-md cursor-pointer mr-1 active:scale-90 ${
-              !canScrollRight ? 'opacity-50 hover:border-cyan-500/30' : 'opacity-100'
-            }`}
+            className={`shrink-0 z-20 w-8 h-8 rounded-lg bg-[#0e1728] border border-cyan-500/40 text-cyan-300 hover:text-white hover:bg-cyan-950 hover:border-cyan-400 flex items-center justify-center transition shadow-md cursor-pointer mr-1 active:scale-90 ${!canScrollRight ? 'opacity-50 hover:border-cyan-500/30' : 'opacity-100'
+              }`}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -400,9 +399,9 @@ export default function TopNavigationBar() {
       </header>
 
       {/* Real-time Telemetry Diagnostics Modal */}
-      <TelemetryDiagnosticsModal 
-        isOpen={isDiagnosticsOpen} 
-        onClose={() => setIsDiagnosticsOpen(false)} 
+      <TelemetryDiagnosticsModal
+        isOpen={isDiagnosticsOpen}
+        onClose={() => setIsDiagnosticsOpen(false)}
       />
 
       {/* Gemini 3.8 Live API Voice Conversation Chamber */}

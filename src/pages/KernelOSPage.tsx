@@ -13,15 +13,12 @@ import {
   Play, 
   Key, 
   FileText, 
-  Database,
   ArrowRight,
-  Shield,
   Activity,
   Server
 } from 'lucide-react';
 import { 
   ACPITable, 
-  DeviceTreeNode, 
   InterruptDescriptor, 
   PageTableMapping, 
   KernelProcess, 

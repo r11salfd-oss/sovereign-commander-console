@@ -1,72 +1,313 @@
 rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: approvals
+// Document ID: ^[a-zA-Z0-9_\-]+$, length 1..128
+// Description: Human-in-the-Loop (HITL) approval proposals lodged by autonomous agents.
+// Fields:
+//   - id: string (required, 1..128 chars, immutable) - Document unique identifier
+//   - status: string (required, enum: ['pending', 'approved', 'executed', 'failed', 'rejected', 'expired']) - Lifecycle state
+//   - risk: string (required, enum: ['low', 'medium', 'high', 'critical']) - Risk rating
+//   - agent: string (required, 1..128 chars, immutable) - Agent identifier proposing the action
+//   - type: string (required, 1..128 chars, immutable) - Operational type
+//   - summary: string (required, 1..1024 chars, immutable) - Concise summary of proposal
+//   - reason: string (required, 1..2048 chars, immutable) - Rationale and justification
+//   - createdAt: string (required, 1..64 chars, immutable) - ISO 8601 creation timestamp
+//   - expiresAt: string (required, 1..64 chars, immutable) - ISO 8601 expiration timestamp
+//   - creatorId: string (required, 1..128 chars, immutable) - Commander UID (must match request.auth.uid)
+//   - payload: map (optional, max keys: 100) - Parameter payload for proposed command
+//   - signature: string (optional, 0..256 chars) - Cryptographic or HMAC verification signature
+//   - result: map (optional) - Sandbox or runtime execution results (stdout, stderr, exitCode, msg)
+//
+// Collection: chat_sessions
+// Document ID: ^[a-zA-Z0-9_\-]+$, length 1..128
+// Description: Persistent sovereign chat sessions and council deliberations.
+// Fields:
+//   - id: string (required, 1..128 chars, immutable) - Session unique identifier
+//   - title: string (required, 1..256 chars) - Human-readable conversation topic
+//   - creatorId: string (required, 1..128 chars, immutable) - Commander UID (must match request.auth.uid)
+//   - createdAt: string (required, 1..64 chars, immutable) - ISO 8601 creation timestamp
+//   - updatedAt: string (required, 1..64 chars) - ISO 8601 last update timestamp
+//   - chatMode: string (required, enum: ['solo', 'council']) - Agent consultation mode
+//   - selectedAgent: string (optional, 0..128 chars) - Active solo agent name
+//   - selectedCouncil: list (optional, max 10 strings, each 1..128 chars) - Active council members
+//   - lastMessage: string (optional, 0..1024 chars) - Last preview message snippet
+//   - messages: list (optional, max 500 items) - Message history array
+//
+// Collection: test_runs
+// Document ID: ^[a-zA-Z0-9_\-]+$, length 1..128
+// Description: Immutable automated test execution audit records.
+// Fields:
+//   - id: string (required, 1..128 chars, immutable) - Test run identifier
+//   - runTitle: string (required, 1..512 chars, immutable) - Title describing test execution
+//   - triggeredBy: string (required, 1..256 chars, immutable) - Email or UID of operator
+//   - createdAt: string (required, 1..64 chars, immutable) - ISO 8601 test timestamp
+//   - totalTests: number (required, 0..1000) - Total test cases evaluated
+//   - passedCount: number (required, 0..1000) - Total tests passed
+//   - failedCount: number (required, 0..1000) - Total tests failed
+//   - passPercentage: number (required, 0..100) - Pass percentage metric
+//   - totalDurationMs: number (required, >= 0) - Total wall-clock runtime in ms
+//   - totalAssertionsCount: number (required, >= 0) - Total sub-assertions checked
+//   - passedAssertionsCount: number (required, >= 0) - Sub-assertions passed
+//   - departmentSummaries: list (required, max 25 items) - Breakdown per system department
+//   - results: list (required, max 100 items) - Granular results per test case
+//   - logs: list (required, max 500 items) - Timestamped verification logs
+//   - creatorId: string (required, 1..128 chars, immutable) - UID of commander triggering run
+//   - aiEvaluation: map (optional) - Autonomous AI health & risk score summary
+//
+// Collection: system_heartbeat
+// Document ID: ^[a-zA-Z0-9_\-]+$, length 1..128
+// Description: Telemetry ping probe documents for cloud round-trip latency benchmarking.
+// Fields:
+//   - timestamp: string (optional, 0..64 chars)
+//   - ping: string | number (optional)
+//   - commanderUid: string (optional, 0..128 chars)
+//   - clientTime: string | number (optional)
+//
+// Collection: test
+// Document ID: connection
+// Description: Read-only probe for client Firestore connectivity checks.
+//
+// ===============================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Default deny: strictly forbid all unmatched paths
     match /{document=**} {
       allow read, write: if false;
     }
-    
-    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
-    function isSignedIn() { return request.auth != null; }
 
+    // ===============================================================
+    // Reusable Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && resource.data.creatorId == request.auth.uid;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+        (request.resource.data[field] is string &&
+         request.resource.data[field].size() >= minLen &&
+         request.resource.data[field].size() <= maxLen);
+    }
+
+    function isValidList(list, maxSize) {
+      return list is list && list.size() <= maxSize;
+    }
+
+    // ===============================================================
+    // Domain Validator Functions (Validator Function Pattern)
+    // Used in BOTH create and update rules across all collections
+    // ===============================================================
+
+    // --- Approval Domain Validator ---
     function isValidApproval(data) {
       return data.keys().hasAll(['id', 'status', 'risk', 'agent', 'type', 'summary', 'reason', 'createdAt', 'expiresAt', 'creatorId']) &&
-             data.id is string && data.id.size() <= 128 &&
+             data.keys().hasOnly(['id', 'status', 'risk', 'agent', 'type', 'summary', 'reason', 'createdAt', 'expiresAt', 'creatorId', 'payload', 'signature', 'result']) &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
              data.status in ['pending', 'approved', 'executed', 'failed', 'rejected', 'expired'] &&
              data.risk in ['low', 'medium', 'high', 'critical'] &&
-             data.agent is string && data.agent.size() <= 128 &&
-             data.type is string && data.type.size() <= 128 &&
-             data.summary is string && data.summary.size() <= 1024 &&
-             data.reason is string && data.reason.size() <= 2048 &&
-             data.createdAt is string && data.createdAt.size() <= 64 &&
-             data.expiresAt is string && data.expiresAt.size() <= 64 &&
-             data.creatorId is string && data.creatorId.size() <= 128 && data.creatorId == request.auth.uid;
+             data.agent is string && data.agent.size() > 0 && data.agent.size() <= 128 &&
+             data.type is string && data.type.size() > 0 && data.type.size() <= 128 &&
+             data.summary is string && data.summary.size() > 0 && data.summary.size() <= 1024 &&
+             data.reason is string && data.reason.size() > 0 && data.reason.size() <= 2048 &&
+             data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 64 &&
+             data.expiresAt is string && data.expiresAt.size() > 0 && data.expiresAt.size() <= 64 &&
+             data.creatorId is string && data.creatorId.size() > 0 && data.creatorId.size() <= 128 &&
+             data.creatorId == request.auth.uid &&
+             isValidOptionalString('signature', 0, 256) &&
+             (!('payload' in data) || data.payload is map) &&
+             (!('result' in data) || data.result is map);
     }
 
+    // --- Approval State Machine & Immutability Validator ---
+    function isValidApprovalTransition(inData, exData) {
+      return inData.creatorId == exData.creatorId &&
+             inData.id == exData.id &&
+             inData.createdAt == exData.createdAt &&
+             inData.agent == exData.agent &&
+             inData.type == exData.type &&
+             inData.summary == exData.summary &&
+             inData.reason == exData.reason &&
+             inData.risk == exData.risk &&
+             inData.expiresAt == exData.expiresAt &&
+             inData.diff(exData).affectedKeys().hasOnly(['status', 'signature', 'result']) &&
+             (
+               // From 'pending', can move to 'approved' or 'rejected'
+               (exData.status == 'pending' && inData.status in ['pending', 'approved', 'rejected']) ||
+               // From 'approved', can move to 'executed' or 'failed'
+               (exData.status == 'approved' && inData.status in ['approved', 'executed', 'failed'])
+             );
+    }
+
+    // --- Chat Session Domain Validator ---
     function isValidChatSession(data) {
       return data.keys().hasAll(['id', 'title', 'creatorId', 'createdAt', 'updatedAt', 'chatMode']) &&
-             data.id is string && data.id.size() <= 128 &&
-             data.title is string && data.title.size() <= 256 &&
-             data.creatorId is string && data.creatorId.size() <= 128 && data.creatorId == request.auth.uid &&
-             data.createdAt is string && data.createdAt.size() <= 64 &&
-             data.updatedAt is string && data.updatedAt.size() <= 64 &&
-             data.chatMode in ['solo', 'council'];
+             data.keys().hasOnly(['id', 'title', 'creatorId', 'createdAt', 'updatedAt', 'chatMode', 'selectedAgent', 'selectedCouncil', 'lastMessage', 'messages']) &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 256 &&
+             data.creatorId is string && data.creatorId.size() > 0 && data.creatorId.size() <= 128 &&
+             data.creatorId == request.auth.uid &&
+             data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 64 &&
+             data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64 &&
+             data.chatMode in ['solo', 'council'] &&
+             isValidOptionalString('selectedAgent', 0, 128) &&
+             isValidOptionalString('lastMessage', 0, 1024) &&
+             (!('selectedCouncil' in data) || (data.selectedCouncil is list && data.selectedCouncil.size() <= 10)) &&
+             (!('messages' in data) || (data.messages is list && data.messages.size() <= 500));
     }
 
+    // --- Test Run Domain Validator ---
+    function isValidTestRun(data) {
+      return data.keys().hasAll([
+               'id', 'runTitle', 'triggeredBy', 'createdAt', 'totalTests',
+               'passedCount', 'failedCount', 'passPercentage', 'totalDurationMs',
+               'totalAssertionsCount', 'passedAssertionsCount', 'departmentSummaries',
+               'results', 'logs', 'creatorId'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'runTitle', 'triggeredBy', 'createdAt', 'totalTests',
+               'passedCount', 'failedCount', 'passPercentage', 'totalDurationMs',
+               'totalAssertionsCount', 'passedAssertionsCount', 'departmentSummaries',
+               'results', 'logs', 'creatorId', 'aiEvaluation'
+             ]) &&
+             data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.runTitle is string && data.runTitle.size() > 0 && data.runTitle.size() <= 512 &&
+             data.triggeredBy is string && data.triggeredBy.size() > 0 && data.triggeredBy.size() <= 256 &&
+             data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 64 &&
+             data.totalTests is number && data.totalTests >= 0 && data.totalTests <= 1000 &&
+             data.passedCount is number && data.passedCount >= 0 && data.passedCount <= 1000 &&
+             data.failedCount is number && data.failedCount >= 0 && data.failedCount <= 1000 &&
+             data.passPercentage is number && data.passPercentage >= 0 && data.passPercentage <= 100 &&
+             data.totalDurationMs is number && data.totalDurationMs >= 0 &&
+             data.totalAssertionsCount is number && data.totalAssertionsCount >= 0 &&
+             data.passedAssertionsCount is number && data.passedAssertionsCount >= 0 &&
+             data.departmentSummaries is list && data.departmentSummaries.size() <= 25 &&
+             data.results is list && data.results.size() <= 100 &&
+             data.logs is list && data.logs.size() <= 500 &&
+             data.creatorId is string && data.creatorId.size() > 0 && data.creatorId.size() <= 128 &&
+             data.creatorId == request.auth.uid &&
+             (!('aiEvaluation' in data) || data.aiEvaluation is map);
+    }
+
+    // --- System Heartbeat Telemetry Validator ---
+    function isValidHeartbeat(data) {
+      return data.keys().hasOnly(['timestamp', 'ping', 'commanderUid', 'clientTime']) &&
+             (!('timestamp' in data) || (data.timestamp is string && data.timestamp.size() <= 64)) &&
+             (!('commanderUid' in data) || (data.commanderUid is string && data.commanderUid.size() <= 128));
+    }
+
+    // ===============================================================
+    // Collection Security Rules
+    // ===============================================================
+
+    // 1. Approvals Queue (HITL Governance)
     match /approvals/{approvalId} {
-      allow get: if isSignedIn() && existing().creatorId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.creatorId == request.auth.uid;
-      allow create: if isSignedIn() && 
+      allow get, list: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
+      
+      allow create: if isAuthenticated() &&
                     isValidId(approvalId) &&
                     isValidApproval(incoming());
-      allow update: if isSignedIn() &&
-                    existing().creatorId == request.auth.uid &&
+                    
+      allow update: if isAuthenticated() &&
+                    resource.data.creatorId == request.auth.uid &&
                     isValidApproval(incoming()) &&
-                    // Only allow status to be updated, or result. Status can only be changed if it was pending or approved
-                    (
-                      incoming().diff(existing()).affectedKeys().hasOnly(['status', 'signature', 'result']) &&
-                      existing().status in ['pending', 'approved'] &&
-                      incoming().creatorId == existing().creatorId &&
-                      incoming().id == existing().id &&
-                      incoming().createdAt == existing().createdAt
-                    );
-      allow delete: if isSignedIn() && existing().creatorId == request.auth.uid;
+                    isValidApprovalTransition(incoming(), existing());
+                    
+      allow delete: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
     }
 
+    // 2. Chat Sessions (Sovereign Memory & Council)
     match /chat_sessions/{sessionId} {
-      allow get: if isSignedIn() && existing().creatorId == request.auth.uid;
-      allow list: if isSignedIn() && resource.data.creatorId == request.auth.uid;
-      allow create: if isSignedIn() && 
+      allow get, list: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
+      
+      allow create: if isAuthenticated() &&
                     isValidId(sessionId) &&
                     isValidChatSession(incoming());
-      allow update: if isSignedIn() &&
-                    existing().creatorId == request.auth.uid &&
-                    incoming().creatorId == request.auth.uid &&
+                    
+      allow update: if isAuthenticated() &&
+                    resource.data.creatorId == request.auth.uid &&
+                    incoming().creatorId == existing().creatorId &&
                     incoming().id == existing().id &&
                     incoming().createdAt == existing().createdAt &&
                     isValidChatSession(incoming());
-      allow delete: if isSignedIn() && existing().creatorId == request.auth.uid;
+                    
+      allow delete: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
+    }
+
+    // 3. Automated Test Runs (Immutable Audit Ledger)
+    match /test_runs/{runId} {
+      // Authenticated commanders can view all system test reports
+      allow get, list: if isAuthenticated();
+      
+      allow create: if isAuthenticated() &&
+                    isValidId(runId) &&
+                    isValidTestRun(incoming());
+                    
+      // Test reports are strictly immutable once written to the audit ledger
+      allow update: if false;
+      
+      allow delete: if isAuthenticated() && resource.data.creatorId == request.auth.uid;
+    }
+
+    // 4. System Telemetry Heartbeat
+    match /system_heartbeat/{heartbeatId} {
+      allow get, list: if isAuthenticated();
+      
+      allow create, update: if isAuthenticated() &&
+                            isValidId(heartbeatId) &&
+                            isValidHeartbeat(incoming());
+                            
+      allow delete: if isAuthenticated();
+    }
+
+    // 5. Connectivity Diagnostic Probe
+    match /test/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
     }
   }
 }

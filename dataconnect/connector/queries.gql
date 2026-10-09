@@ -1,0 +1,132 @@
+# ============================================================================
+# SOVEREIGN COMMANDER CONSOLE - AUTHORIZED GRAPHQL QUERIES
+# Security: Zero-Trust Row-Level Security with @auth(level: USER) & auth.uid
+# Chain Key ID: 360ea36c28e66d9d
+# ============================================================================
+
+# 1. Fetch Commander's HITL Approvals Queue
+query GetMyApprovals @auth(level: USER) {
+  sovereignApprovals(
+    where: { creator: { uid: { eq_expr: "auth.uid" } } },
+    orderBy: [{ createdAt: DESC }]
+  ) {
+    id
+    agentId
+    actionType
+    status
+    risk
+    summary
+    reason
+    signature
+    payloadJson
+    executionResultJson
+    createdAt
+    expiresAt
+    resolvedAt
+  }
+}
+
+# 2. Fetch Pending Approvals Requiring Immediate Action
+query GetMyPendingApprovals @auth(level: USER) {
+  sovereignApprovals(
+    where: {
+      creator: { uid: { eq_expr: "auth.uid" } },
+      status: { eq: "pending" }
+    },
+    orderBy: [{ createdAt: DESC }]
+  ) {
+    id
+    agentId
+    actionType
+    risk
+    summary
+    reason
+    createdAt
+    expiresAt
+  }
+}
+
+# 3. Fetch Commander's Chat Sessions List
+query GetMyChatSessions @auth(level: USER) {
+  sovereignChatSessions(
+    where: { creator: { uid: { eq_expr: "auth.uid" } } },
+    orderBy: [{ updatedAt: DESC }]
+  ) {
+    id
+    title
+    chatMode
+    selectedAgent
+    selectedCouncilJson
+    lastMessage
+    createdAt
+    updatedAt
+  }
+}
+
+# 4. Fetch Deep Conversation History for a Specific Session
+query GetChatSessionWithMessages($sessionId: UUID!) @auth(level: USER) {
+  sovereignChatSession(
+    key: { id: $sessionId }
+  ) {
+    id
+    title
+    chatMode
+    selectedAgent
+    selectedCouncilJson
+    lastMessage
+    createdAt
+    updatedAt
+    sovereignChatMessages_on_session(orderBy: [{ createdAt: ASC }]) {
+      id
+      sender
+      agent
+      modelRole
+      model
+      text
+      imageUrl
+      createdAt
+    }
+  }
+}
+
+# 5. Fetch Cryptographic Audit Ledger
+query GetAuditLedger($limit: Int) @auth(level: USER) {
+  sovereignAuditBlocks(
+    orderBy: [{ blockIndex: DESC }],
+    limit: $limit
+  ) {
+    id
+    blockIndex
+    previousHash
+    currentHash
+    merkleRoot
+    eventType
+    originAgent
+    payloadJson
+    signature
+    createdAt
+  }
+}
+
+# 6. Fetch Historical Test Runs for Automated Verification Ledger
+query GetRecentTestRuns($limit: Int) @auth(level: USER) {
+  sovereignTestRuns(
+    orderBy: [{ createdAt: DESC }],
+    limit: $limit
+  ) {
+    id
+    runTitle
+    triggeredBy
+    totalTests
+    passedCount
+    failedCount
+    passPercentage
+    totalDurationMs
+    totalAssertionsCount
+    passedAssertionsCount
+    resultsJson
+    logsJson
+    aiEvaluationJson
+    createdAt
+  }
+}
