@@ -17,9 +17,9 @@ import time
 from dataclasses import dataclass
 
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    getattr(sys.stdout, "reconfigure")(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    getattr(sys.stderr, "reconfigure")(encoding="utf-8", errors="replace")
 
 CHAIN_KEY_ID = "360ea36c28e66d9d"
 

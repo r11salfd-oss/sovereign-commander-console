@@ -17,7 +17,7 @@ import subprocess
 # Ensure UTF-8 output on Windows
 if sys.platform == 'win32':
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        getattr(sys.stdout, 'reconfigure', lambda **kw: None)(encoding='utf-8')
     except Exception:
         pass
 

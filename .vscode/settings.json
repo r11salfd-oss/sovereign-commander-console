@@ -27,6 +27,7 @@
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
   "files.eol": "\n",
+  "npm.packageManager": "npm",
 
   // --- File Associations & Nesting ---
   "files.associations": {
@@ -94,7 +95,7 @@
   "python.languageServer": "Jedi",
   "python.analysis.typeCheckingMode": "basic",
   "python.analysis.autoImportCompletions": true,
-  "python.analysis.diagnosticMode": "workspace",
+  "python.analysis.diagnosticMode": "openFilesOnly",
   "[python]": {
     "editor.tabSize": 4,
     "editor.insertSpaces": true

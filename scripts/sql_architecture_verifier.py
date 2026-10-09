@@ -15,7 +15,7 @@ from typing import Final
 
 # Ensure UTF-8 output on Windows consoles
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    getattr(sys.stdout, "reconfigure")(encoding="utf-8", errors="replace")
 
 CHAIN_KEY_ID: Final[str] = "360ea36c28e66d9d"
 

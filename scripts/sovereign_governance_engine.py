@@ -25,9 +25,9 @@ from urllib.request import Request, urlopen
 
 # Ensure UTF-8 output on Windows consoles
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    getattr(sys.stdout, "reconfigure")(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    getattr(sys.stderr, "reconfigure")(encoding="utf-8", errors="replace")
 
 # Constant Configuration
 DEFAULT_BASE_URL: Final[str] = "http://localhost:3000"
