@@ -603,13 +603,13 @@ export default function DeveloperPage() {
 
               {/* Environment Variables Export */}
               <div className="space-y-1.5">
-                <span className="text-[11px] text-slate-400">2. ضبط متغيرات البيئة للربط المباشر مع الخادم:</span>
+                <span className="text-[11px] text-slate-400">2. ضبط متغيرات البيئة للربط المباشر مع الخادم (استبدل sov_your_token_here برمزك — لا يُشحن أي رمز حقيقي إلى المتصفح):</span>
                 <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs text-amber-300 font-mono">
                   <code className="truncate mr-2">
-                    export SOVEREIGN_HOST="{hostUrl}" && export SOVEREIGN_TOKEN="sov_live_d819c40ea7e260951b3fc1a97e682e"
+                    export SOVEREIGN_HOST="{hostUrl}" && export SOVEREIGN_TOKEN="sov_your_token_here"
                   </code>
                   <button
-                    onClick={() => handleCopy(`export SOVEREIGN_HOST="${hostUrl}"\nexport SOVEREIGN_TOKEN="sov_live_d819c40ea7e260951b3fc1a97e682e"`, 'env-export')}
+                    onClick={() => handleCopy(`export SOVEREIGN_HOST="${hostUrl}"\nexport SOVEREIGN_TOKEN="sov_your_token_here"`, 'env-export')}
                     className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-white transition text-xs shrink-0 cursor-pointer active:scale-95"
                   >
                     {copiedKey === 'env-export' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -625,11 +625,11 @@ export default function DeveloperPage() {
                   <pre className="overflow-x-auto whitespace-pre">
 {`curl -s -X POST "${hostUrl}/api/cli/execute" \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer sov_live_d819c40ea7e260951b3fc1a97e682e" \\
+  -H "Authorization: Bearer sov_your_token_here" \\
   -d '{"command": "ls -la"}'`}
                   </pre>
                   <button
-                    onClick={() => handleCopy(`curl -s -X POST "${hostUrl}/api/cli/execute" -H "Content-Type: application/json" -H "Authorization: Bearer sov_live_d819c40ea7e260951b3fc1a97e682e" -d '{"command": "ls -la"}'`, 'curl-direct')}
+                    onClick={() => handleCopy(`curl -s -X POST "${hostUrl}/api/cli/execute" -H "Content-Type: application/json" -H "Authorization: Bearer sov_your_token_here" -d '{"command": "ls -la"}'`, 'curl-direct')}
                     className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white transition text-[10px] cursor-pointer"
                   >
                     {copiedKey === 'curl-direct' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}

@@ -375,7 +375,7 @@ function assertFailureEvidenceContract(): CheckResult {
  * Defects #2, #3 and #4 shared one mechanism: nothing asserted that a gate had ever executed, and
  * the advisory ledger was hand-maintained prose. This check parses the workflow itself and asks
  * three questions that prose cannot answer:
- *   - is every gate 1..9 present? (a deleted gate is a silent loss of coverage)
+ *   - is every gate 1..10 present? (a deleted gate is a silent loss of coverage)
  *   - does every local artifact a gate invokes exist? (a gate pointing at a deleted file is a no-op)
  *   - is every ledger exemption owned, dated and unreachable-by-default? (rot becomes visible)
  */
@@ -408,7 +408,7 @@ function readWorkflowFacts(): WorkflowFacts {
 function assertGateInventory(facts: WorkflowFacts): CheckResult {
     const names = facts.gates.map(gate => gate.name);
     const missingGates: string[] = [];
-    for (let n = 1; n <= 9; n += 1) {
+    for (let n = 1; n <= 10; n += 1) {
         if (!names.some(name => new RegExp(`Gate ${n}:`).test(name))) missingGates.push(String(n));
     }
     if (missingGates.length > 0) {
@@ -458,7 +458,7 @@ function assertGateInventory(facts: WorkflowFacts): CheckResult {
 
     return {
         ok: true,
-        detail: `gates 1-9 present; ${referenced.size} referenced artifacts exist; ${Object.keys(facts.ledger).length} ledger entr${Object.keys(facts.ledger).length === 1 ? 'y' : 'ies'} owned, dated and within horizon`
+        detail: `gates 1-10 present; ${referenced.size} referenced artifacts exist; ${Object.keys(facts.ledger).length} ledger entr${Object.keys(facts.ledger).length === 1 ? 'y' : 'ies'} owned, dated and within horizon`
     };
 }
 
