@@ -134,3 +134,130 @@ map, or in a lockfile.
 Hardcoding a plausible-looking value to satisfy a type or a check is the same
 defect class as a fabricated status, wearing a different hat. If a value is not
 real, say `UNVERIFIED` or leave it absent.
+
+---
+
+# 8. SOVEREIGN ARSENAL (ALL AGENTS / ALL MODELS)
+
+The arsenal is a governed capability available to **every agent and every model** through
+three surfaces: the `sovereign-arsenal` MCP server, the `sovereign-arsenal` skill, and the
+`arsenal-operator` subagent. The rules below are binding.
+
+## 8.0 ARSENAL GOVERNANCE CHAIN
+
+- **ZERO BYPASS**: Every arsenal action MUST preserve the sovereign chain:
+  `Goal → Plan → Intent → Policy → Approval → Token → Start → ExecutionManager → Audit → Snapshot → SQLite → Replay → Narrative`
+- **READ-ONLY FIRST**: All server operations start as read-only. A state-changing action
+  (Restart, Kill, Install) requires explicit plan-based approval **and** a rollback snapshot.
+- **EVIDENCE PRESERVATION**: No evidence folder or audit log may be deleted.
+- **REDACTION**: All sensitive strings (KEY, TOKEN, SECRET, ...) are `[REDACTED]` in logs and UI.
+- **NEVER FAKE UI STATE**: The interface must reflect the exact state of the backend
+  persistence. If the data is not in SQLite/Replay, it does not exist.
+
+## 8.1 SOVEREIGN ARSENAL (ALL AGENTS / ALL MODELS)
+
+**Platform:** `src/neo/arsenal/` — 15 modules, 67 exports, unified by `arsenalCommander`.
+
+| Piece | Location | Purpose |
+|---|---|---|
+| Core governance | `src/neo/arsenal/core/arsenal_core.ts` | `arsenalCore` — operations, findings, audit trail |
+| Orchestrator | `src/neo/arsenal/commander/arsenal_commander.ts` | `arsenalCommander.run(...)` — auto-chain + TTP + risk + report + evidence |
+| TTP & risk | `src/neo/arsenal/core/ttp_engine.ts` | `TTPEngine` (MITRE ATT&CK), `RiskScoring` (0-100) |
+| MCP server | `mcp/arsenal_mcp_server.ts` | server name `sovereign-arsenal` (registered in `opencode.json`) |
+| Agent | `.opencode/agents/arsenal-operator.md` | purpose-built operator agent |
+| Skill | `.opencode/skills/sovereign-arsenal/SKILL.md` | loadable knowledge for any agent |
+| System prompt | `prompts/ARSENAL_SYSTEM_PROMPT.md` | for local model injection |
+| API reference | `docs/ARSENAL_API_REFERENCE.json` | machine-readable export surface |
+| Health check | `tools/arsenal_verify.ts` | **run this before trusting the platform** |
+
+**Mandatory rules**
+- Every arsenal action runs inside `arsenalCore.createOperation(mode, scope, target, auth)`. Never bypass it.
+- For any comprehensive assessment use `arsenalCommander.run(...)` (or the `commander_run` MCP tool) — do not hand-wire modules.
+- **Never report unverified results as findings.** Probes that actually execute (e.g. TCP connect) may produce findings; stubbed output may not.
+- Malware analysis and C2 require sandbox mode plus explicit authorization. Never weaken those gates.
+- Attach material artifacts through `ReportingArsenal.evidence.collect()` and open a custody chain.
+- **Lab hygiene: fixtures must carry inert indicators.** A PE-shaped file containing a *live* c2 address is quarantined within milliseconds by the host's on-access scanner on a Windows-mounted drive (`/mnt/d`): the write appears to succeed, then `open()` fails with `EINVAL` and the file is gone. Use the RFC 5737 documentation range (`198.51.100.7`) and the reserved `.example` TLD — every IOC regex still matches, the analysis stays real.
+
+**Quick start**
+
+```bash
+npx tsx tools/arsenal_verify.ts      # platform health
+```
+
+```typescript
+import { arsenalCommander } from './src/neo/arsenal/index.ts';
+const res = await arsenalCommander.run({
+  mission: 'FULL_RECON', target: 'TARGET', scope: ['TARGET'], auth: 'AUTH'
+});
+// res.operationId, res.findings, res.ttpCoverage, res.riskAssessment, res.evidenceIds
+```
+
+## 8.2 MCP TOPOLOGY (ALL AGENTS / ALL MODELS)
+
+**Registered in `opencode.json`:**
+
+| Server | Source | Tools | Purpose |
+|---|---|---|---|
+| `sovereign-arsenal` | local — `mcp/arsenal_mcp_server.ts` | 12 | the arsenal |
+| `opencode_bridge` | local — `mcp/opencode_mcp_server.ts` | 13 | live read/drive access to the running OpenCode server |
+| `opencode` | published by OpenCode | 8 | native tools: sessions, worktrees, models, MCP resources |
+| `opencode_console` | published by the OpenCode Console | 11 | workspace: members, providers, models, usage, budgets |
+
+**Mandatory rules (learned from a real outage — do not break them)**
+- **Never name a local MCP server `opencode` or `opencode_console`.** OpenCode publishes servers under those
+  exact names; a config entry with the same name *replaces* the published server and its tools vanish from
+  every agent. The local bridge is `opencode_bridge` for this reason.
+- **Never start an MCP server with `npx -y <package>` unless that package is installed in `node_modules`.**
+  `npx` resolves the package from the registry at startup; a name that does not exist dies with
+  `npm error 404 Not Found - GET https://registry.npmjs.org/<package>` and the agent silently loses the
+  tools. `tools/arsenal_verify.ts` [6e] enforces both rules.
+- Both local servers are **dependency-free** (Node built-ins only, stdio JSON-RPC 2.0). A missing npm
+  package must never be able to disable them.
+- The bridge reads its credentials at runtime from `~/.config/opencode/service.json` (or
+  `OPENCODE_SERVER_PASSWORD`). **Never commit the password.**
+
+**Verify the topology**
+
+```bash
+opencode mcp list                    # every server must read "connected"
+npx tsx tools/arsenal_verify.ts     # [6e] guards the topology
+node tools/opencode_mcp_probe.mjs   # 14 live checks against the real OpenCode API
+```
+
+## 8.3 AGENT & SKILL DISCOVERY (silent failures — verify, don't assume)
+
+OpenCode v2 discovers agents and skills by strict glob and decodes their frontmatter against a
+fixed schema. **Both failure modes are silent**: the file is simply never registered, and the
+agent/skill never appears for any model. There is no warning in the log.
+
+| Asset | v2 location | Trap that makes it vanish |
+|---|---|---|
+| Agent | `.opencode/agents/<name>.md` (or `.opencode/agent/`) | frontmatter `tools:` as a **list** — the legacy schema wants a **map** (`read: true`); the agent is dropped |
+| Skill | `.opencode/skills/<id>/SKILL.md` | the file name must be exactly `SKILL.md` (case-sensitive) — `skill.md` is never discovered |
+
+**Rules**
+- An agent without `mode: subagent` defaults to `primary` and never appears in the subagent catalogue.
+- Do not use legacy top-level agent fields (`temperature`, `tools`, `prompt`, `permission`) — native v2
+  keys are `model`, `variant`, `request`, `system`, `description`, `mode`, `hidden`, `color`, `steps`,
+  `disabled`, `permissions`.
+- The server reads a location's config **once**, when the location opens. A new agent or skill is only
+  picked up after the OpenCode service is restarted.
+- `tools/arsenal_verify.ts` [7] enforces the layout, the filename and the frontmatter shape.
+
+**Prove it, don't assume**
+
+```bash
+opencode api get "/api/agent?location%5Bdirectory%5D=$PWD" | grep -o '"id":"[^"]*"'   # agent registered?
+opencode api get "/api/skill?location%5Bdirectory%5D=$PWD" | grep -o '"id":"[^"]*"'   # skill registered?
+python3 tools/service_snapshot.py evidence/arsenal/service_restart_snapshot_after.json
+```
+
+**After a service restart, re-run the snapshot and diff it against the baseline.** The snapshot tool
+records the live agent/skill ids, the MCP registration, the service URL, the process tree and the git
+head — so a restart can be proven complete and reversible:
+
+```bash
+python3 tools/service_snapshot.py evidence/arsenal/service_restart_snapshot_before.json   # baseline
+# ... restart the service ...
+python3 tools/service_snapshot.py evidence/arsenal/service_restart_snapshot_after.json    # proof
+```

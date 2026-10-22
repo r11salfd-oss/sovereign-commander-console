@@ -12,7 +12,23 @@ scratch/
 screenshots/
 
 # Sovereign audit ledger (append-only, host-owned, may contain sensitive action detail)
-data/
+# The arsenal's SOURCE assets live under data/ and must be tracked, so the blanket
+# ignore is narrowed to data/* and the source files are re-included explicitly.
+# (A bare "data/" cannot be negated: git refuses to descend into an ignored directory.)
+data/*
+!data/.gitignore
+!data/arsenal_fewshot.jsonl
+!data/arsenal/
+data/arsenal/*
+!data/arsenal/feeds/
+!data/arsenal/feeds/**
+!data/arsenal/ids/
+!data/arsenal/ids/**
+!data/arsenal/wordlists/
+!data/arsenal/wordlists/**
+# Arsenal runtime OUTPUT (quarantine copies and forensic captures) is never source.
+data/arsenal/quarantine/
+data/arsenal/forensics/
 
 # ============================================================
 # QUARANTINE GUARD — the quarantine itself lives OUTSIDE this repo
@@ -34,3 +50,35 @@ data/
 kali/
 kali/**
 kali/qui/
+
+# Upstream's bare `secrets/` rule (above) matches at ANY depth, so it also swallowed
+# src/neo/arsenal/secrets/ - the secrets-scanner MODULE. The rule is meant for a
+# top-level credentials directory; the module is source and must be committed.
+!src/neo/arsenal/secrets/
+
+# ============================================================
+# SOVEREIGN ARSENAL (added by the arsenal platform)
+# ============================================================
+.env
+.env.*
+sovereign_core.db
+sovereign_core.db-journal
+sovereign_core.db-wal
+sandbox/*
+!sandbox/reports/
+sandbox/reports/*
+!sandbox/reports/sandbox_runtime_remediation.json
+!sandbox/reports/sandbox_independent_verification.json
+!sandbox/reports/sandbox_runtime_closure_record.json
+!sandbox/reports/release_gate.json
+!sandbox/reports/r01_closure_manifest.json
+evidence/
+src/server/services/__mocks__/
+your-repo/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv_test/
+sovereign_shield_proxy/.venv/
