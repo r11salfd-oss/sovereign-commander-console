@@ -133,7 +133,7 @@ jobs:
         #   -> fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  (refs/tags/v5)
         # Verified `runs.using: node24` at this SHA, which clears the
         # "Node.js 20 is deprecated" warning that refs/tags/v4 still emitted.
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Setup Node.js Runtime (${{ matrix.node }})
         # Pinned by SHA. `git ls-remote https://github.com/actions/setup-node refs/tags/v5`
@@ -613,7 +613,7 @@ jobs:
     steps:
       - name: 🛡️ Checkout Source Code
         # Same pinned SHA as Job 1.
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: 🐳 Set up Docker Buildx
         # Pinned by SHA. `git ls-remote https://github.com/docker/setup-buildx-action refs/tags/v4`
