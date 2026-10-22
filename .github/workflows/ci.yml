@@ -94,16 +94,14 @@ permissions:
 #   explicitly forbidden, so the ledger is the honest instrument here.
 # ==============================================================================
 env:
+  # EMPTY BY REMEDIATION - 2026-10-22. The ledger carried exactly one entry:
+  # GHSA-m9gg-hp2v-232j (@grpc/grpc-js <= 1.13.5, transitive via
+  # firebase/@firebase/firestore, expiry 2026-11-01, owner dependency-owner).
+  # It is closed by the package.json `overrides` pin to @grpc/grpc-js 1.14.6.
+  # Gate 3 condition (b) requires the ledger to SHRINK when an advisory is no
+  # longer reported; keeping the entry would now fail the build.
   SOVEREIGN_AUDIT_BASELINE: |
-    {
-      "https://github.com/advisories/GHSA-m9gg-hp2v-232j": {
-        "package": "@grpc/grpc-js",
-        "severity": "high",
-        "reason": "getAuthContext memory growth; transitive via firebase/firestore. Fix requires firebase semver-major to 9.14.0.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      }
-    }
+    {}
 jobs:
   # ----------------------------------------------------------------------------
   # Job 1: Shift-Left Sovereign Quality Gates
