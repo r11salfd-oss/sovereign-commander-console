@@ -143,11 +143,32 @@ class SovereignClient:
                     details=f"Engine: {engine} | Services: {list(services.keys())}",
                     healthy=True,
                 )
+            case (200, True, "degraded"):
+                # The kernel answers, but at least one subsystem is not configured.
+                # That is not "Critical" and it is not "Unknown": the server names the
+                # missing parts in `degradedServices`, and this probe repeats them
+                # instead of discarding them. Still unhealthy - an unconfigured
+                # production dependency must stay visible.
+                engine = data.get("engine", "Sovereign OS")
+                missing = data.get("degradedServices") or []
+                return SubsystemReport(
+                    name="Core Health Probe",
+                    status=HealthState.DEGRADED.value,
+                    details=(
+                        f"Engine: {engine} | serving, but unconfigured: "
+                        f"{', '.join(missing) if missing else 'unnamed subsystem'}"
+                    ),
+                    healthy=False,
+                )
             case _:
+                # Never replace the server's own verdict with the word "Unknown".
+                reported = data.get("status") or data.get("error") or "no status field"
+                missing = data.get("degradedServices") or []
+                suffix = f" | degraded: {', '.join(missing)}" if missing else ""
                 return SubsystemReport(
                     name="Core Health Probe",
                     status=HealthState.CRITICAL.value,
-                    details=f"Status: {status} | Error: {data.get('error', 'Unknown')}",
+                    details=f"HTTP {status} | reported status: {reported}{suffix}",
                     healthy=False,
                 )
 
