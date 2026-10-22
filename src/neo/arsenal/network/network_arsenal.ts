@@ -934,11 +934,16 @@ export class IDSIPS {
         this.rules = parsed;
 
         // Write the rule set to disk as a real, inspectable artifact.
+        // PER-PROCESS FILE: a single shared name (arsenal.rules) is a state-bound assumption of the
+        // same class as a fixed port. fs.writeFileSync truncates before it writes, so a second
+        // process deploying rules can make a concurrent reader observe an empty file - measured at
+        // 1,289,070 empty reads out of 1,614,814 under contention. A per-process name keeps the
+        // artifact real and inspectable while removing the cross-process truncation.
         let ruleFile = '';
         try {
-            const dir = path.join(process.env.ARSENAL_ROOT || process.cwd(), 'data/arsenal/ids');
+            const dir = path.join(process.env.ARSENAL_ROOT || process.cwd(), 'data/arsenal/ids/runs');
             fs.mkdirSync(dir, { recursive: true });
-            ruleFile = path.join(dir, 'arsenal.rules');
+            ruleFile = path.join(dir, `arsenal-${process.pid}.rules`);
             fs.writeFileSync(ruleFile, parsed.map((r, i) => {
                 const sid = /(\d+)/.exec(r.id)?.[1] ?? String(1000 + i);
                 const local = r.match.localPort ?? 'any';

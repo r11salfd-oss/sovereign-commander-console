@@ -6,17 +6,33 @@ import net from 'net';
 import { arsenalCore, arsenalCommander, NetworkArsenal } from '../src/neo/arsenal/index.ts';
 
 const listeners: net.Server[] = [];
-function listen(port: number): Promise<number> {
+function listen(): Promise<number> {
   return new Promise((resolve) => {
     const s = net.createServer((c) => c.end());
-    s.listen(port, '127.0.0.1', () => resolve(port));
+    s.listen(0, '127.0.0.1', () => resolve((s.address() as net.AddressInfo).port));
     listeners.push(s);
   });
 }
 
+/**
+ * A port the kernel has just released. It is the honest way to obtain a "closed" target:
+ * a fixed guess can be taken by any other process on the host (EADDRINUSE for listeners,
+ * an unexpected open for scanners), which is a property of the machine, not of the code.
+ */
+async function closedPort(): Promise<number> {
+  const probe = net.createServer();
+  const port = await new Promise<number>((resolve) => {
+    probe.listen(0, '127.0.0.1', () => resolve((probe.address() as net.AddressInfo).port));
+  });
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
+}
+
 async function main() {
-  const openPort = await listen(45311);
-  const openPort2 = await listen(45312);
+  const openPort = await listen();
+  const openPort2 = await listen();
+  const closedPortA = await closedPort();
+  const closedPortB = await closedPort();
   console.log(`[setup] real listeners started on 127.0.0.1:${openPort} and :${openPort2}`);
 
   const op = arsenalCore.createOperation('PURPLE', ['127.0.0.1'], '127.0.0.1', 'LIVE-PROBE');
@@ -24,7 +40,7 @@ async function main() {
 
   const net_ = new NetworkArsenal(op);
   const before = arsenalCore.getFindings().length;
-  const res = await net_.scanner.tcpConnectScan('127.0.0.1', [45311, 45312, 45399, 45398]);
+  const res = await net_.scanner.tcpConnectScan('127.0.0.1', [openPort, openPort2, closedPortA, closedPortB]);
 
   console.log('\n[scan results]');
   for (const r of res) console.log(`   port ${r.port} -> ${r.state}${r.service ? ' (' + r.service + ')' : ''}`);

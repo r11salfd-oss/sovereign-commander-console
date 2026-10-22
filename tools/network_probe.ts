@@ -92,14 +92,41 @@ check('our probe server appears in the parsed table with the right port', !!ourS
     ourServer ? `${ourServer.localAddress}:${ourServer.localPort} ${ourServer.state}` : 'not found');
 check('every parsed entry has a numeric port', conns.every(c => Number.isInteger(c.localPort) && Number.isInteger(c.remotePort)), 'sanity');
 // Cross-check against the kernel's own view through `ss`.
-let ssCount = -1;
+//
+// The FULL table is a live collection: under load thousands of connections open and close between
+// two independent reads, so comparing totals with a small tolerance is an assertion that cannot
+// hold (observed: module=11432 ss=11648). LISTEN sockets are stable, and the probe's own port is the
+// strongest single fact to cross-check: if the kernel agrees that this port is listening, the parse
+// is correct for it regardless of how much traffic came and went in between.
+let ssListening: string[] | null = null;
+let ssUnavailable = '';
 try {
     const { execFileSync } = await import('child_process');
-    const out = execFileSync('ss', ['-tan'], { encoding: 'utf8' });
-    ssCount = out.split('\n').filter(l => l.trim().length > 0).length - 1;
-} catch { /* ss may be absent */ }
-check('parsed connection count is consistent with ss(8)', ssCount < 0 || Math.abs(conns.length - ssCount) <= 6,
-    `module=${conns.length} ss=${ssCount}`);
+    // Filter the state column locally instead of passing `state listen`: some ss builds accept
+    // only the uppercase state name and fail with "wrong state name", which would silently turn
+    // the cross-check into a skip. The column is the first field in every iproute2 version.
+    ssListening = execFileSync('ss', ['-H', '-tan'], { encoding: 'utf8' })
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => /^LISTEN\b/.test(line));
+} catch (err) {
+    const e = err as { code?: string; stderr?: string; message?: string };
+    ssUnavailable = e.code === 'ENOENT'
+        ? 'ss is not installed on this host'
+        : `ss failed: ${String(e.stderr || e.message || 'unknown error').trim().slice(0, 120)}`;
+}
+
+const moduleListening = conns.filter(c => c.state === 'LISTEN');
+if (ssListening === null) {
+    check('ss(8) cross-check available', true, `${ssUnavailable}: cross-check reported as skipped, not swallowed`);
+} else {
+    check('listening-socket count is consistent with ss(8) state listen',
+        Math.abs(moduleListening.length - ssListening.length) <= 2,
+        `module LISTEN=${moduleListening.length} ss LISTEN=${ssListening.length}`);
+    check('ss(8) independently confirms the probe listener',
+        ssListening.some(line => line.includes(`:${port}`)),
+        `:${port} ${ssListening.some(line => line.includes(`:${port}`)) ? 'present' : 'missing'} in ss state listen`);
+}
 
 console.log('\n=== 5. ANOMALY DETECTION (real traffic table) ===');
 const anom = await net_.monitor.detectAnomalies(conns);

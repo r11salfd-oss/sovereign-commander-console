@@ -11,7 +11,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = path.join(ROOT, 'mcp', 'arsenal_mcp_server.ts');
 
 const srv = net.createServer(c => c.end());
-await new Promise(r => srv.listen(45321, '127.0.0.1', r));
+await new Promise(r => srv.listen(0, '127.0.0.1', r));
+// The kernel assigns the port; a fixed one collides with any other instance on the host.
+const srvPort = srv.address().port;
 
 const child = spawn('npx', ['tsx', SERVER], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
 let buf = ''; const lines = [];
@@ -73,9 +75,9 @@ const run = async (name, args, check) => {
 
 await run('arsenal_status', {}, p => p ? true : 'null payload');
 await run('create_operation', { mode: 'PURPLE', scope: ['127.0.0.1'], target: '127.0.0.1', auth: 'PROBE' }, p => p?.operationId ? true : 'no operationId');
-await run('network_scan', { target: '127.0.0.1', ports: [45321, 45322], auth: 'PROBE' }, p => {
+await run('network_scan', { target: '127.0.0.1', ports: [srvPort, srvPort + 1], auth: 'PROBE' }, p => {
   const open = p?.openPorts || [];
-  return open.includes(45321) ? true : `expected 45321 open, got ${JSON.stringify(p?.results)}`;
+  return open.includes(srvPort) ? true : `expected ${srvPort} open, got ${JSON.stringify(p?.results)}`;
 });
 await run('commander_status', {}, p => p?.status === 'OPERATIONAL' ? true : 'status=' + p?.status);
 await run('commander_run', { mission: 'QUICK_SCAN', target: '127.0.0.1', scope: ['127.0.0.1'], auth: 'PROBE' }, p => {
@@ -89,7 +91,7 @@ await run('commander_run', { mission: 'QUICK_SCAN', target: '127.0.0.1', scope: 
 });
 await run('get_findings', {}, p => Array.isArray(p) ? true : 'not an array');
 await run('get_audit', { limit: 10 }, p => Array.isArray(p) && p.length > 0 ? true : 'empty audit');
-await run('web_assess', { url: 'http://127.0.0.1:45321/', auth: 'PROBE' }, p => p?.operationId ? true : 'no operationId');
+await run('web_assess', { url: `http://127.0.0.1:${srvPort}/`, auth: 'PROBE' }, p => p?.operationId ? true : 'no operationId');
 await run('crypto_audit', { hash: '5f4dcc3b5aa765d61d8327deb882cf99', auth: 'PROBE' }, p => p?.hash?.type === 'MD5' ? true : 'hash type mismatch');
 await run('osint_domain', { domain: 'github.com', auth: 'PROBE' }, p => p?.whois?.reachable === true ? true : 'whois failed');
 await run('threat_intel', { indicator: '198.51.100.7', updateFeeds: false, auth: 'PROBE' }, p => p?.hits?.length > 0 ? true : 'no hits');

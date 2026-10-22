@@ -82,3 +82,5 @@ __pycache__/
 .ruff_cache/
 venv_test/
 sovereign_shield_proxy/.venv/
+# Per-process IDS rule artifacts (runtime output, never source).
+data/arsenal/ids/runs/
