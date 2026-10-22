@@ -71,7 +71,12 @@ const csr = crypto_.certs.generateCSR('arsenal.test.local', { organization: 'Sov
 check('CSR is PEM', csr.includes('-----BEGIN CERTIFICATE REQUEST-----'), `${csr.length} bytes`);
 const { execFileSync } = await import('child_process');
 const fs = await import('fs');
-const tmp = fs.mkdtempSync('/tmp/opencode/csr-');
+const os = await import('os');
+const path = await import('path');
+// PORTABILITY: the scratch directory must be the host's, not one this repository happens to
+// have on the machine that wrote the probe. A hardcoded `/tmp/opencode` passed locally and
+// failed on the CI runner with ENOENT, which is exactly what a hardcoded path should do.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arsenal-csr-'));
 const p = `${tmp}/r.csr`;
 fs.writeFileSync(p, csr);
 const csrText = execFileSync('openssl', ['req', '-in', p, '-noout', '-text'], { encoding: 'utf8' });

@@ -4,6 +4,8 @@
  * Every assertion is checked against a live source (WHOIS/DNS/CT/HTTP) or a real file on disk.
  */
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { arsenalCore, OSINTArsenal } from '../src/neo/arsenal/index.ts';
 
 const failures: string[] = [];
@@ -94,7 +96,7 @@ function chunk(type: string, data: Buffer): Buffer {
     const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
     return Buffer.concat([len, body, crc]);
 }
-const pngPath = '/tmp/opencode/arsenal-text-probe.png';
+const pngPath = path.join(os.tmpdir(), 'arsenal-text-probe.png');
 try {
     const ihdr = Buffer.alloc(13);
     ihdr.writeUInt32BE(1, 0); ihdr.writeUInt32BE(1, 4);
@@ -107,7 +109,7 @@ try {
         chunk('IDAT', Buffer.from([0x78, 0x9c, 0x63, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01])),
         chunk('IEND', Buffer.alloc(0))
     ]);
-    fs.mkdirSync('/tmp/opencode', { recursive: true });
+    fs.mkdirSync(path.dirname(pngPath), { recursive: true });
     fs.writeFileSync(pngPath, png);
     const pmeta = osint.metadata.extractFromFile(pngPath);
     check('PNG format detected', pmeta.format === 'PNG', String(pmeta.format));
@@ -116,7 +118,7 @@ try {
 } catch (e: any) {
     check('PNG tEXt fixture built', false, e?.message);
 }
-const missing = osint.metadata.extractFromFile('/tmp/opencode/definitely-not-here.bin');
+const missing = osint.metadata.extractFromFile(path.join(os.tmpdir(), 'definitely-not-here.bin'));
 check('missing file reported honestly', missing.exists === false && !!missing.error, String(missing.error));
 
 console.log(`\n${failures.length === 0 ? 'OSINT PROBE: ALL PASSED' : 'OSINT PROBE: FAILURES -> ' + failures.join(', ')}`);

@@ -6,7 +6,7 @@
  * Run: npx tsx tools/secrets_ai_probe.ts
  *
  * What this script does:
- *  1. Creates a throwaway fixture tree under /tmp/opencode (never inside the repository).
+ *  1. Creates a throwaway fixture tree under the host temporary directory (never inside the repository).
  *  2. Writes real credential fixtures (AWS key, generic api_key assignment, JWT, PEM header,
  *     a mode-0644 .env) plus a genuinely clean file that must produce ZERO findings.
  *  3. Scans the fixture tree, scans the .env files, and scans the REAL git history of this repo.
@@ -24,13 +24,14 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
+import os from 'os';
 import { arsenalCore } from '../src/neo/arsenal/core/arsenal_core.ts';
 import SecretsScanner from '../src/neo/arsenal/secrets/secrets_scanner.ts';
 import type { SecretFinding } from '../src/neo/arsenal/secrets/secrets_scanner.ts';
 import AIRedTeam from '../src/neo/arsenal/ai_redteam/ai_redteam.ts';
 
 const REPO = path.resolve(process.cwd());
-const TMP_ROOT = '/tmp/opencode';
+const TMP_ROOT = process.env.ARSENAL_TMP_ROOT || os.tmpdir();
 const FIXTURE_DIR = path.join(TMP_ROOT, `nexus_secrets_probe_${Date.now()}`);
 
 /* ------------------------------------------------------------------ fixtures (full values live here only) */

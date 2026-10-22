@@ -26,9 +26,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-const PROBE_ROOT = process.env.DEFENSIVE_PROBE_ROOT || '/tmp/opencode/arsenal-root';
+const PROBE_ROOT = process.env.DEFENSIVE_PROBE_ROOT || path.join(os.tmpdir(), 'arsenal-root');
 const PROBE_DATA_DIR = path.join(PROBE_ROOT, 'data', 'arsenal');
-const TARGET_DIR = process.env.DEFENSIVE_PROBE_TARGET_DIR || '/tmp/opencode';
+const TARGET_DIR = process.env.DEFENSIVE_PROBE_TARGET_DIR || path.join(os.tmpdir(), 'arsenal-defensive-target');
 
 function sha256(data: Buffer | string): string {
     return crypto.createHash('sha256').update(data).digest('hex');
