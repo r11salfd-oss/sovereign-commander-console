@@ -129,6 +129,42 @@ interface Detector {
 const PLACEHOLDER_RE =
     /^(changeme|placeholder|example|your[_-]?|<.*>|\$\{.*\}|process\.env|xxx+|todo|dummy|test|admin|password)$/i;
 
+/**
+ * `KEY = value` / `"key": "value"` where the KEY NAME is secret-ish.
+ *
+ * The entropy detectors answer "does this look like a credential?". Redaction has to
+ * answer a different question - "is this a secret?" - and a value stored under
+ * `API_KEY` is a secret by definition, however unremarkable it looks. Relying on the
+ * detectors alone meant `API_KEY=demo_test_token_...` passed through redact()
+ * untouched: measured, this leaked. The key name is therefore authoritative here.
+ */
+const SECRET_ASSIGNMENT_RE =
+    /((?:[A-Za-z0-9_.-]*?(?:api[_-]?key|secret|token|password|passwd|pwd|access[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]*["']?)\s*[:=]\s*)(?:"([^"\n]*)"|'([^'\n]*)'|(\$\{[^}\n]*\})|([^\s,;#"'{}]+))/gi;
+
+/** Values that must survive redaction: empty, indirections, placeholders, already masked. */
+const NON_SECRET_VALUE_RE =
+    /^(?:|process\.env\.[A-Za-z0-9_]+|\$\{[^}]*\}|<[^>]*>|changeme|placeholder|example|your[_-].*|xxx+|todo|dummy|test|admin|password|\[REDACTED\]|\*+)$/i;
+
+/**
+ * Mask every value bound to a secret-ish key name.
+ *
+ * Indirections (`process.env.X`, `${VAR}`), angle-bracket placeholders and obvious
+ * placeholder words are left alone so that configuration keeps being readable; the
+ * already-masked forms are skipped so that redacting twice cannot double-mask.
+ */
+export function redactSecretAssignments(text: string): string {
+    if (!text) return text;
+    return text.replace(SECRET_ASSIGNMENT_RE, (full: string, prefix: string, dq?: string, sq?: string, braced?: string, bare?: string) => {
+        const value = dq ?? sq ?? braced ?? bare ?? '';
+        if (NON_SECRET_VALUE_RE.test(value)) return full;
+        if (value.includes('…')) return full;
+        const masked = maskSecretValue(value).redacted;
+        if (dq !== undefined) return `${prefix}"${masked}"`;
+        if (sq !== undefined) return `${prefix}'${masked}'`;
+        return `${prefix}${masked}`;
+    });
+}
+
 /** A key name that suggests the value is a digest rather than a secret. */
 const HASH_KEY_RE = /hash|md5|sha\d|digest|checksum|uuid|etag|sum/i;
 
@@ -748,7 +784,10 @@ export class SecretsScanner {
     /** Mask every credential-shaped value inside arbitrary text. */
     redact(text: string): string {
         if (!text) return text;
-        let out = text;
+        // Key-driven pass first: a value bound to a secret-ish key name is a secret even
+        // when it is not random enough to trip a detector. The detectors then run over the
+        // already-masked text, so pattern-shaped secrets in free prose are still caught.
+        let out = redactSecretAssignments(text);
         for (const det of DETECTORS) {
             const regex = new RegExp(det.regex.source, det.regex.flags.includes('g') ? det.regex.flags : det.regex.flags + 'g');
             out = out.replace(regex, (full, ...groups) => {

@@ -43,7 +43,7 @@ const FIXTURE_DIR = path.join(TMP_ROOT, `nexus_secrets_probe_${Date.now()}`);
 // one day be a REAL key. The scanner still receives exactly the same shapes at runtime,
 // so every detector below is exercised for real - only the literal stops living in the
 // source tree.
-const AWS_KEY = ['AKIA', 'QYLPMN5H', 'HFPZAM2'].join('');
+const AWS_KEY = ['AKIA', 'QYLPMN5H', 'HFPZAM2X'].join('');
 const GENERIC_KEY_VALUE = ['Zx8Kq2mXvB7', 'nL4pR9tY3wE6', 'sH1cJ5dGf'].join('');
 const JWT_VALUE = [
     'eyJhbGciOiJIUzI1NiIs',
