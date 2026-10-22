@@ -1,0 +1,8 @@
+# Runtime artefacts produced by arsenal probes and local services.
+# These are outputs, never source. tracked data files (e.g. arsenal_fewshot.jsonl) are unaffected.
+sandbox_vault/
+training_stager.py
+sandbox_sample.bin
+*.pid
+*.db-shm
+*.db-wal
