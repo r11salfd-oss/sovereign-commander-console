@@ -148,7 +148,7 @@ jobs:
         # Pinned by SHA. `git ls-remote https://github.com/actions/setup-python refs/tags/v6`
         #   -> ece7cb06caefa5fff74198d8649806c4678c61a1  (refs/tags/v6)
         # Verified `runs.using: 'node24'` at this SHA.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
