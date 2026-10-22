@@ -177,9 +177,33 @@ async function run() {
             const script = p(rel);
             if (!fs.existsSync(script)) return false;
             // execSync throws on a non-zero exit code, so a probe that reports a failure cannot pass.
-            const out = execSync(`npx tsx ${JSON.stringify(script)}`, { cwd: ROOT, encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
-            if (!/PASS/i.test(out)) throw new Error('probe did not report a PASS result');
-            return true;
+            try {
+                const out = execSync(`npx tsx ${JSON.stringify(script)}`, { cwd: ROOT, encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
+                if (!/PASS/i.test(out)) throw new Error('probe did not report a PASS result');
+                return true;
+            } catch (err) {
+                // OBSERVABILITY: the only useful evidence of a failing probe is what the probe
+                // itself printed, plus HOW it ended. A real CI run printed "Command failed:"
+                // with no stdout, no stderr and no signal, which left the failure undiagnosable
+                // from the log. Both streams and the exit status/signal are attached now, so a
+                // timeout reads as signal=SIGTERM and a crash reads as status=1 with its stack.
+                const e = err as {
+                    stdout?: Buffer | string | null;
+                    stderr?: Buffer | string | null;
+                    message?: string;
+                    status?: number | null;
+                    signal?: string | null;
+                };
+                const lines = [String(e.stdout ?? ''), String(e.stderr ?? '')]
+                    .join('\n')
+                    .split('\n')
+                    .map(l => l.trim())
+                    .filter(Boolean);
+                const tail = lines.slice(-14).join(' | ');
+                const how = `status=${e.status ?? 'null'} signal=${e.signal ?? 'none'}`;
+                const command = String(e.message ?? 'probe failed').split('\n')[0];
+                throw new Error(`${command} [${how}] :: ${tail || '(probe produced no output on either stream)'}`);
+            }
         });
     }
 

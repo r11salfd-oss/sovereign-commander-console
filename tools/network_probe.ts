@@ -49,15 +49,27 @@ const closedPort = scan.find(p => p.port === 1);
 check('dead port reported closed or filtered', closedPort?.state === 'closed' || closedPort?.state === 'filtered', JSON.stringify(closedPort));
 
 console.log('\n=== 2. INTERFACE COUNTERS (real /proc/net/dev) ===');
+// RACE-PROOF READING: /proc/net/dev is a monotonically increasing counter. Comparing the
+// module's value to a second, independent read with `===` asserts that not a single packet
+// moved on loopback between the two reads - true on an idle workstation and false on a busy
+// CI runner, which is exactly how this probe failed there once. The counter is bracketed
+// instead: the module reads between two raw reads, so its value must lie in [before, after].
+// That is exact, needs no tolerance, and cannot flake under any scheduling.
+const readLoRx = (): number => {
+    const raw = fs.readFileSync('/proc/net/dev', 'utf8');
+    const line = raw.split('\n').find(l => l.trim().startsWith('lo:'));
+    return line ? Number(line.trim().split(/\s+/)[1]) : -1;
+};
+const rxBefore = readLoRx();
 const counters = net_.analyzer.readInterfaceCounters();
+const rxAfter = readLoRx();
 check('counters read from /proc/net/dev', counters.length > 0, `${counters.length} interfaces: ${counters.map(c => c.interface).join(',')}`);
 const lo = counters.find(c => c.interface === 'lo');
 check('loopback counters are numeric and non-negative', !!lo && lo.rxBytes >= 0 && lo.txBytes >= 0,
     lo ? `lo rx=${lo.rxBytes}B tx=${lo.txBytes}B pkt ${lo.rxPackets}/${lo.txPackets}` : 'lo not present');
-const raw = fs.readFileSync('/proc/net/dev', 'utf8');
-const rawLo = raw.split('\n').find(l => l.trim().startsWith('lo:'));
-const rawRx = rawLo ? Number(rawLo.trim().split(/\s+/)[1]) : -1;
-check('loopback rx counter matches /proc/net/dev exactly', !!lo && lo.rxBytes === rawRx, `module=${lo?.rxBytes} proc=${rawRx}`);
+check('loopback rx counter matches /proc/net/dev exactly',
+    !!lo && rxBefore >= 0 && lo.rxBytes >= rxBefore && lo.rxBytes <= rxAfter,
+    lo ? `module=${lo.rxBytes} proc=[${rxBefore}..${rxAfter}]` : 'lo not present');
 
 console.log('\n=== 3. BANNER GRAB / SESSION CAPTURE (real bytes) ===');
 const cap = await net_.analyzer.capture('lo', `127.0.0.1:${port}`);
