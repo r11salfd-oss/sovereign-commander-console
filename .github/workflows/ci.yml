@@ -96,120 +96,14 @@ permissions:
 env:
   SOVEREIGN_AUDIT_BASELINE: |
     {
-      "https://github.com/advisories/GHSA-xv26-6w52-cph6": {
-        "package": "websocket-driver",
-        "severity": "critical",
-        "reason": "DoS in websocket-driver; transitive via firebase realtime transport. Fix requires firebase semver-major to 9.14.0.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-fx2h-pf6j-xcff": {
-        "package": "vite",
-        "severity": "high",
-        "reason": "vite server.fs.deny bypass; dev-server only, not shipped in the production dist bundle. Fix requires vite semver-major.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
       "https://github.com/advisories/GHSA-m9gg-hp2v-232j": {
         "package": "@grpc/grpc-js",
         "severity": "high",
         "reason": "getAuthContext memory growth; transitive via firebase/firestore. Fix requires firebase semver-major to 9.14.0.",
         "owner": "dependency-owner",
         "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-chx6-hx7r-mcp5": {
-        "package": "react-router",
-        "severity": "high",
-        "reason": "react-router open redirect; transitive via react-router-dom. Fix requires react-router-dom semver-major.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-qwww-vcr4-c8h2": {
-        "package": "react-router",
-        "severity": "high",
-        "reason": "react-router RSC CSRF; transitive via react-router-dom. Fix requires react-router-dom semver-major.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-r28c-9q8g-f849": {
-        "package": "postcss",
-        "severity": "high",
-        "reason": "postcss parsing error / incorrect source map exposure; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-c83g-rgw3-j3cx": {
-        "package": "browserslist",
-        "severity": "high",
-        "reason": "Unbounded memory growth, no cache eviction; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-73wf-gq98-2v4g": {
-        "package": "browserslist",
-        "severity": "high",
-        "reason": "Uncaught crash / prototype write via untrusted regex; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-hmw2-7cc7-3qxx": {
-        "package": "form-data",
-        "severity": "high",
-        "reason": "CRLF injection in multipart boundary; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp": {
-        "package": "brace-expansion",
-        "severity": "high",
-        "reason": "DoS via exponential-time consecutive expansion; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-mh99-v99m-4gvg": {
-        "package": "brace-expansion",
-        "severity": "high",
-        "reason": "DoS via unbounded expansion length; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-rgw5-rvv9-x895": {
-        "package": "brace-expansion",
-        "severity": "high",
-        "reason": "DoS via unbounded intermediate arrays; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-qhr7-859c-m2p7": {
-        "package": "brace-expansion",
-        "severity": "high",
-        "reason": "DoS via uncontrolled recursion on nested braces; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p": {
-        "package": "brace-expansion",
-        "severity": "high",
-        "reason": "DoS via uncontrolled recursion in parseCommand; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-2v37-7h3g-55p8": {
-        "package": "nanoid",
-        "severity": "high",
-        "reason": "Custom generators can loop indefinitely; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
-      },
-      "https://github.com/advisories/GHSA-28wg-ghj8-5hjv": {
-        "package": "nanoid",
-        "severity": "high",
-        "reason": "Non-secure generators can loop indefinitely; transitive build-time dependency. Fix is non-breaking.",
-        "owner": "dependency-owner",
-        "expires": "2026-11-01"
       }
     }
-
 jobs:
   # ----------------------------------------------------------------------------
   # Job 1: Shift-Left Sovereign Quality Gates
@@ -531,6 +425,16 @@ jobs:
       # Parses this workflow with a real YAML parser and asserts the gate
       # structure is present. This is what stops a future edit from quietly
       # deleting a gate: the assertions below FAIL if a gate step disappears.
+      #
+      # Gate 7 cannot verify anything without PyYAML. The runner's Python has
+      # never carried it, so the gate has always reported UNVERIFIED and exited
+      # non-zero - it was never reached, because Gate 2 failed first. Installing
+      # the one parser it asks for is not a weakening: the gate still refuses to
+      # pass if the parse or any assertion fails, and an install failure fails
+      # this step, so the gate cannot be skipped by removing the dependency.
+      - name: '🐍 Install Gate 7 verification dependency (PyYAML)'
+        run: python -m pip install --disable-pip-version-check --no-input pyyaml
+
       - name: '🧾 Gate 7: Workflow Integrity Self-Verification (YAML parse + gate assertions)'
         run: |
           python - <<'PY'
