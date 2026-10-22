@@ -90,7 +90,7 @@ check('parsed connection count is consistent with ss(8)', ssCount < 0 || Math.ab
     `module=${conns.length} ss=${ssCount}`);
 
 console.log('\n=== 5. ANOMALY DETECTION (real traffic table) ===');
-const anom = await net_.monitor.detectAnomalies();
+const anom = await net_.monitor.detectAnomalies(conns);
 check('anomaly detector ran over the live table', anom.analyzed === conns.length, `analyzed=${anom.analyzed}`);
 check('every anomaly carries concrete evidence', anom.anomalies.every(a => a.detail && a.evidence !== undefined),
     `${anom.anomalies.length} anomalies: ${anom.anomalies.map(a => a.type).join(',') || '(none on this host)'}`);

@@ -579,12 +579,18 @@ export class NetworkMonitor {
     /**
      * Real anomaly detection over the live connection table. Every anomaly carries the
      * connection(s) that produced it.
+     *
+     * `snapshot` lets a caller pass a table it has already read, so the analysis and the
+     * caller's own assertions describe the SAME kernel snapshot. Without it this method
+     * reads the kernel itself, and two reads of a live table legitimately differ - which
+     * made a caller that compared the two counts for exact equality fail intermittently
+     * on a busy host. Omitted = read live, exactly as before.
      */
-    async detectAnomalies(): Promise<{
+    async detectAnomalies(snapshot?: ConnectionEntry[]): Promise<{
         anomalies: { type: string; severity: string; detail: string; evidence: any }[];
         analyzed: number;
     }> {
-        const conns = await this.getConnections();
+        const conns = snapshot ?? await this.getConnections();
         const established = conns.filter(c => c.state === 'ESTABLISHED');
         const synRecv = conns.filter(c => c.state === 'SYN_RECV' || c.state === 'NEW_SYN_RECV');
         const anomalies: { type: string; severity: string; detail: string; evidence: any }[] = [];
