@@ -27,9 +27,13 @@ Copy the provided template and fill it in:
 cp .env.example .env.local   # Windows: copy .env.example .env.local
 ```
 
-`.env.example` lists the full set: `PORT`, `NODE_ENV`, `CHAIN_KEY_ID`,
+`.env.example` lists the primary runtime set: `PORT`, `NODE_ENV`, `CHAIN_KEY_ID`,
 `GEMINI_API_KEY`, `GCP_PROJECT_ID`, `GCP_REGION`, and the Firebase credentials
-(`FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`).
+(`FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`). It also
+documents every optional integration the server reads (the `GEMINI_API` alias, Azure
+OpenAI, OpenCode/Zen, the host prober, and the fail-closed CLI token file). An empty
+optional variable means the capability is disabled and says so; it is never silently
+treated as configured.
 
 Two details that the AI Studio template got wrong or omitted:
 
@@ -69,9 +73,31 @@ npm start       # node dist/server.cjs
 
 `npm run lint` and `npm run check` both run `tsc --noEmit` and must exit 0.
 
+### Verify a production run
+
+```bash
+npm run build
+PORT=3000 NODE_ENV=production npm start
+curl -s http://127.0.0.1:3000/api/health   # HTTP 200 + JSON
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/   # 200 (SPA)
+```
+
+`/api/health` answers **200** when the kernel is up. With no model credentials it
+reports `"status":"degraded"` and `"geminiGateway":"unconfigured"`, which is truthful:
+the process is serving, the optional gateway is not configured. A non-200 or no answer
+means the process is not up.
+
 ## Container
 
 `Dockerfile` is a two-stage `node:20-alpine` build: the builder stage runs `npm ci` and
 `npm run build`, the runner stage installs production dependencies with
 `npm ci --omit=dev`, copies in `dist/` and `public/`, drops to the unprivileged `node`
 user, and exposes port 3000 with `CMD ["node", "dist/server.cjs"]`.
+
+## Deployment
+
+`.github/workflows/deploy.yml` is `workflow_dispatch` only: a merge never deploys.
+It fails loudly, by design, until the deployment path is provisioned. To make it
+executable an operator must provide the repository secrets `GCP_SA_KEY` and
+`GCP_PROJECT_ID` and approve the infrastructure decision; until then the workflow
+reports `NOT YET WIRED` instead of a green check that deployed nothing.
