@@ -1,0 +1,10 @@
+[
+  {"type":"ip","value":"198.51.100.7","confidence":90,"source":"probe","tags":["c2"]},
+  {"type":"domain","value":"malicious.example","confidence":80,"source":"probe","tags":["c2","malware"]},
+  {"type":"url","value":"http://malicious.example/payload.exe","confidence":85,"source":"probe","tags":["delivery"]},
+  {"type":"hash","value":"d41d8cd98f00b204e9800998ecf8427e","confidence":95,"source":"probe","tags":["malware"]},
+  {"type":"email","value":"attacker@malicious.example","confidence":70,"source":"probe","tags":["phishing"]},
+  {"type":"ip","value":"203.0.113.12","confidence":88,"source":"probe","tags":["c2","scanner"]},
+  {"type":"ip","value":"45.155.205.233","confidence":90,"source":"probe","tags":["ransomware","c2"]},
+  {"type":"domain","value":"ransomware.example","confidence":85,"source":"probe","tags":["ransomware"]}
+]

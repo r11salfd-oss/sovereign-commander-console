@@ -1,0 +1,4 @@
+[
+  {"name":"feodotracker","url":"https://feodotracker.abuse.ch/downloads/ipblocklist.json","format":"feodotracker"},
+  {"name":"ipsum","url":"https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt","format":"text"}
+]

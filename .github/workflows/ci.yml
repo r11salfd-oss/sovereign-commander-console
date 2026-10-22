@@ -551,6 +551,19 @@ jobs:
           print(" RESULT: GATE 7 PASSED - workflow structure is intact and pinned.")
           PY
 
+      - name: '🧪 Gate 8: Sovereign Arsenal Platform Health (61 live checks)'
+        # The Sovereign Arsenal is a governed capability surface: 15 modules, a commander,
+        # an MCP server, a skill and an operator agent. This gate proves the platform is
+        # real and wired correctly - real socket probes, the malware/C2 deep probe, the ten
+        # ground-truth capability probes, the MCP topology guards and the agent/skill
+        # discovery guards.
+        #
+        # Every probe targets localhost or RFC 5737 documentation addresses, so the gate is
+        # deterministic on a CI runner and needs no external network. The live bridge probe
+        # skips itself when no OpenCode server is running - that is an environment fact, not
+        # a defect, and the skip is printed rather than swallowed.
+        run: npx tsx tools/arsenal_verify.ts
+
       - name: '📤 Archive Production Artifacts'
         # Pinned by SHA. `git ls-remote https://github.com/actions/upload-artifact refs/tags/v7`
         #   -> 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  (refs/tags/v7)

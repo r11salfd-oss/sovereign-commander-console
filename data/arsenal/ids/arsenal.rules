@@ -1,0 +1,1 @@
+alert tcp any any -> any 80 (msg:"plaintext web traffic"; sid:1000001; severity:MEDIUM;)
