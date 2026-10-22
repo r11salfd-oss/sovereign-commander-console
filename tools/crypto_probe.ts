@@ -74,8 +74,10 @@ const fs = await import('fs');
 const os = await import('os');
 const path = await import('path');
 // PORTABILITY: the scratch directory must be the host's, not one this repository happens to
-// have on the machine that wrote the probe. A hardcoded `/tmp/opencode` passed locally and
+// have on the machine that wrote the probe. A hardcoded scratch path passed locally and
 // failed on the CI runner with ENOENT, which is exactly what a hardcoded path should do.
+// Gate 9 enforces this at repository level (no author-machine paths in executable code), so
+// the literal is deliberately not repeated here.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arsenal-csr-'));
 const p = `${tmp}/r.csr`;
 fs.writeFileSync(p, csr);

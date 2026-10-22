@@ -76,7 +76,7 @@
     "connections": "net.monitor.readConnections() -> real /proc/net/tcp{,6} parsed and PID-mapped",
     "anomalies": "net.monitor.detectAnomalies() -> computed from the live connection table",
     "bypass": "net.bypass.testTechniques(target) -> real HTTP probes, out-of-scope targets are REFUSED",
-    "ids": "net.idsips.deployRules(rules) -> writes data/arsenal/ids/arsenal.rules and matches live traffic"
+    "ids": "net.idsips.deployRules(rules) -> writes data/arsenal/ids/runs/arsenal-<pid>.rules and matches live traffic"
   },
   "web": {
     "entry": "WebArsenal",

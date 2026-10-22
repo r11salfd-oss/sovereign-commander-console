@@ -467,7 +467,7 @@ jobs:
           # token in an unrelated step name (e.g. renaming a step to
           # "REMOVED Gate 5 step" would satisfy it). Requiring the colon means a
           # genuinely deleted gate step cannot be masked.
-          required = ["Gate %d:" % n for n in range(1, 8)]
+          required = ["Gate %d:" % n for n in range(1, 10)]
           absent = [g for g in required if not any(g in n for n in names)]
           if absent:
               print(" [BLOCKED] missing gate step(s): %s" % ", ".join(absent))
@@ -563,6 +563,16 @@ jobs:
         # skips itself when no OpenCode server is running - that is an environment fact, not
         # a defect, and the skip is printed rather than swallowed.
         run: npx tsx tools/arsenal_verify.ts
+
+      - name: '🌳 Gate 9: Root Guards (the defect classes cannot return)'
+        # Gate 8 proves that capabilities work. Gate 9 proves that the CLASSES of defect which
+        # produced real CI failures cannot return unnoticed: machine-bound paths and ports, one
+        # resolution computed twice in two languages, exact equality against a moving counter,
+        # exclusive ownership of a shared artifact, failures reported without evidence, and gates
+        # assumed green without ever having run.
+        # Every check is written so that it can fail. See docs/ROOT_CAUSE_REGISTER.md for the
+        # defect -> root class -> guard mapping and the command that re-verifies each one.
+        run: npx tsx tools/root_guard.ts
 
       - name: '📤 Archive Production Artifacts'
         # Pinned by SHA. `git ls-remote https://github.com/actions/upload-artifact refs/tags/v7`

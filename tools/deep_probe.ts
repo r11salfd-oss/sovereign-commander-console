@@ -43,7 +43,7 @@ async function main() {
         'http://malicious-c2.example/payload.bin',
         'powershell.exe -enc SQBFAFgA',
         'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',
-        'C:\\Users\\admin\\AppData\\Local\\Temp\\dropper.exe',
+        'C:\\Users\\admin\\AppData\\Local\\Temp\\dropper.exe', // path-guard: allow (inert IOC fixture: a sample dropper path the extractor must detect, not a machine dependency)
         '198.51.100.7', 'operator@malicious-c2.example'
     ];
 
@@ -235,8 +235,9 @@ async function main() {
             res.end('<html>not found</html>');
         }
     });
-    await new Promise<void>(r => webServer.listen(45331, '127.0.0.1', r));
-    const webUrl = 'http://127.0.0.1:45331/login';
+    await new Promise<void>(r => webServer.listen(0, '127.0.0.1', r));
+    const webPort = (webServer.address() as { port: number }).port;
+    const webUrl = `http://127.0.0.1:${webPort}/login`;
 
     const { WebArsenal } = await import('../src/neo/arsenal/index.ts');
     const web = new WebArsenal(op);
@@ -249,7 +250,7 @@ async function main() {
     assert('web: script src extracted', (crawl.scripts || []).length === 1, String(crawl.scripts?.length));
 
     const beforeWeb = arsenalCore.getFindings().length;
-    const brute = await web.scanner.directoryBrute({ url: 'http://127.0.0.1:45331/' });
+    const brute = await web.scanner.directoryBrute({ url: `http://127.0.0.1:${webPort}/` });
     console.log(`   dir brute: reachable=${brute.reachable} tested=${brute.tested} found=${brute.found.length}`);
     assert('web: directory discovery made real requests', brute.reachable === true && brute.tested > 10, `${brute.tested}`);
     assert('web: real sensitive path found', brute.found.some((f: any) => f.path.includes('/admin')), JSON.stringify(brute.found.map((f: any) => f.path)));
