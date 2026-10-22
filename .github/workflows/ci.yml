@@ -467,7 +467,7 @@ jobs:
           # token in an unrelated step name (e.g. renaming a step to
           # "REMOVED Gate 5 step" would satisfy it). Requiring the colon means a
           # genuinely deleted gate step cannot be masked.
-          required = ["Gate %d:" % n for n in range(1, 10)]
+          required = ["Gate %d:" % n for n in range(1, 11)]
           absent = [g for g in required if not any(g in n for n in names)]
           if absent:
               print(" [BLOCKED] missing gate step(s): %s" % ", ".join(absent))
@@ -573,6 +573,17 @@ jobs:
         # Every check is written so that it can fail. See docs/ROOT_CAUSE_REGISTER.md for the
         # defect -> root class -> guard mapping and the command that re-verifies each one.
         run: npx tsx tools/root_guard.ts
+
+      - name: '🔐 Gate 10: Client Credential Literal Guard (nothing secret ships to the browser)'
+        # Gate 6 built the bundle; this gate reads it. A credential removed from
+        # source but still present in dist/ is still shipped, and a scanner that
+        # only knows a closed list of prefixes answered PASS for 69 commits while
+        # a real `sov_` literal shipped to every browser. This guard tests the
+        # STRUCTURE of a credential, not a prefix list, and it scans source,
+        # static assets, HTML entry points, the built bundle and source maps.
+        # Proven able to fail: on 87c96dc it exits 1 with 8 findings (4 source,
+        # 4 bundle); after the fix it exits 0. See docs/SECRET_ROTATION_RUNBOOK.md.
+        run: node scripts/verify_client_credentials.mjs
 
       - name: '📤 Archive Production Artifacts'
         # Pinned by SHA. `git ls-remote https://github.com/actions/upload-artifact refs/tags/v7`
