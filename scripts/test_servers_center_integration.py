@@ -40,6 +40,23 @@ CHAIN_KEY_ID = "360ea36c28e66d9d"
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CANONICAL_MANIFEST = os.path.join(ROOT_DIR, "config", "servers_center_manifest.json")
 
+
+def _resolved_manifest_path():
+    """The single manifest this suite has resolved, for Python AND TypeScript.
+
+    SUITE 1 and SUITE 2 read the manifest directly. SUITE 4 delegates to the
+    TypeScript registry, which resolves its own paths from the environment and
+    defaults to the legacy Windows centre (`E:\\Servers-Center`). On any host
+    without that centre the child therefore enumerated nothing while the parent
+    was validating the committed manifest: two different answers to the same
+    question, in the same run. This returns the one path both must use.
+    """
+    if CENTER_ROOT:
+        candidate = os.path.join(CENTER_ROOT, "manifest.json")
+        if os.path.exists(candidate):
+            return candidate
+    return CANONICAL_MANIFEST
+
 # ── SERVERS CENTER LOCATOR (Chain Key 360ea36c28e66d9d) ──────────────────────
 # FORENSIC FINDING: the centre root was resolved as
 #     os.environ.get("SERVERS_CENTER_PATH", r"E:\Servers-Center")
@@ -245,12 +262,28 @@ console.log(JSON.stringify(result));
             print("  [FAIL] Unable to locate the 'npx' launcher on PATH.")
             print("         Install Node.js (npx ships with it) before running this suite.")
             return False
+        # PROPAGATE THE RESOLUTION ABOVE (Chain Key 360ea36c28e66d9d)
+        # FORENSIC FINDING: SUITEs 1-3 enumerated the committed manifest, while
+        # this child process was handed no environment at all. The TS registry
+        # therefore fell back to `E:\Servers-Center`, found no root, and
+        # honestly reported an empty inventory - which the suite then read as a
+        # failed assertion. That is why Gate 2 was red on every Linux host,
+        # including CI, for a reason unrelated to the repository's content.
+        #
+        # The fix hands the child the SAME resolution this suite already made,
+        # so parent and child describe the same inventory. Nothing is relaxed:
+        # every assertion below still reads the measured payload and still fails
+        # when entries are absent.
+        child_env = dict(os.environ)
+        child_env["SERVERS_CENTER_ROOT"] = CENTER_ROOT if CENTER_ROOT else ROOT_DIR
+        child_env["SERVERS_CENTER_MANIFEST"] = _resolved_manifest_path()
         proc = subprocess.run(
             [npx, "tsx", runner_file],
             capture_output=True,
             text=True,
             check=True,
-            shell=False
+            shell=False,
+            env=child_env
         )
         output = proc.stdout.strip()
         lines = [l for l in output.split("\n") if l.startswith("{")]
